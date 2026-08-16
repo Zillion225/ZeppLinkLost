@@ -1,0 +1,17 @@
+# Node.js dependencies
+node_modules/
+
+# Zeus build and preview artifacts
+dist/
+*.zab
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local editor and operating-system files
+.DS_Store
+.vscode/
+.idea/
