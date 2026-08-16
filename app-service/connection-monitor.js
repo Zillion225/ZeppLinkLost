@@ -6,6 +6,7 @@ import {
   removeListener,
 } from '@zos/ble'
 import { notify } from '@zos/notification'
+import { create as createMediaPlayer, id as mediaId } from '@zos/media'
 import { SystemSounds } from '@zos/sensor'
 import { createSysTimer, stopTimer } from '@zos/timer'
 import { log } from '@zos/utils'
@@ -14,21 +15,66 @@ import { getDisconnectDelayMs } from '../utils/settings'
 
 const logger = log.getLogger('linklost-service')
 const systemSounds = new SystemSounds()
+const alarmPlayer = createMediaPlayer(mediaId.PLAYER)
 
 let connectionStateMachine
 let currentConnectionState = null
 let pendingDisconnectTimerId = null
+let alarmStopTimerId = null
+let alarmIsPlaying = false
 let disconnectNotificationSent = false
 let connectionStateRevision = 0
 
-function playDisconnectSound() {
-  if (!systemSounds.getEnabled()) {
-    logger.log('Link Lost sound is disabled in the watch system settings')
+const ALARM_MAX_DURATION_MS = 10000
+
+alarmPlayer.addEventListener(alarmPlayer.event.PREPARE, (ready) => {
+  if (!ready) {
+    alarmIsPlaying = false
+    logger.warn('Link Lost alarm file could not be prepared')
     return
   }
 
-  systemSounds.start(systemSounds.getSourceType().MESSAGE)
-  logger.log('Played Link Lost disconnect sound')
+  if (alarmIsPlaying) {
+    alarmPlayer.start()
+    logger.log('Started Link Lost custom alarm audio')
+  }
+})
+
+function stopDisconnectAlarm(reason) {
+  if (alarmStopTimerId !== null) {
+    stopTimer(alarmStopTimerId)
+    alarmStopTimerId = null
+  }
+
+  if (!alarmIsPlaying) {
+    return
+  }
+
+  alarmPlayer.stop()
+  alarmIsPlaying = false
+  logger.log(`Link Lost alarm stopped: ${reason}`)
+}
+
+function playDisconnectAlarm() {
+  stopDisconnectAlarm('starting a new alarm')
+  alarmIsPlaying = true
+  alarmPlayer.setSource(alarmPlayer.source.FILE, {
+    file: 'link-lost-alarm.mp3',
+  })
+  alarmPlayer.prepare()
+
+  // This is a safety cutoff when the user does not press Stop alarm.
+  const timerId = createSysTimer(false, ALARM_MAX_DURATION_MS, () => {
+    if (alarmStopTimerId === timerId) {
+      alarmStopTimerId = null
+      alarmPlayer.stop()
+      alarmIsPlaying = false
+      logger.log('Link Lost alarm stopped after 10 seconds')
+    }
+  })
+
+  alarmStopTimerId = timerId
+  logger.log('Started Link Lost repeating alarm')
 }
 
 function playReconnectSound() {
@@ -54,7 +100,13 @@ function sendDisconnectNotification() {
   const notificationId = notify({
     title: 'Link Lost',
     content: 'LK: Phone connection lost',
-    actions: [],
+    actions: [
+      {
+        text: 'Stop alarm',
+        file: 'app-service/connection-monitor',
+        param: 'action=stop-alarm',
+      },
+    ],
     vibrate: 5,
   })
 
@@ -65,7 +117,7 @@ function sendDisconnectNotification() {
   )
 
   if (notificationId) {
-    playDisconnectSound()
+    playDisconnectAlarm()
   }
 }
 
@@ -156,6 +208,7 @@ AppService({
 
         if (connected) {
           cancelPendingDisconnectAlert()
+          stopDisconnectAlarm('phone reconnected')
 
           // A reconnect is useful only after this app has sent a lost-phone alert.
           if (!isInitialState && previousConnectionState === false && disconnectNotificationSent) {
@@ -183,8 +236,16 @@ AppService({
     logger.log('Background BLE connection listener registered')
   },
 
+  // Notification actions are delivered to the app service while it is running.
+  onEvent(event) {
+    if (typeof event === 'string' && event.includes('action=stop-alarm')) {
+      stopDisconnectAlarm('user pressed Stop alarm')
+    }
+  },
+
   onDestroy() {
     cancelPendingDisconnectAlert()
+    stopDisconnectAlarm('background service stopped')
     removeListener()
     disConnect()
     connectionStateMachine = undefined
