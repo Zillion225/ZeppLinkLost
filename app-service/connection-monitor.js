@@ -11,12 +11,13 @@ import { log } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
 
 const logger = log.getLogger('linklost-service')
-const DISCONNECT_CONFIRMATION_DELAY_MS = 5000
+const DISCONNECT_CONFIRMATION_DELAY_MS = 10000
 
 let connectionStateMachine
 let currentConnectionState = null
-let pendingDisconnectTimerId = 0
+let pendingDisconnectTimerId = null
 let disconnectNotificationSent = false
+let connectionStateRevision = 0
 
 function handleConnectionChange(status) {
   if (typeof status !== 'boolean') {
@@ -58,12 +59,12 @@ function sendReconnectNotification() {
 }
 
 function cancelPendingDisconnectAlert() {
-  if (!pendingDisconnectTimerId) {
+  if (pendingDisconnectTimerId === null) {
     return
   }
 
   stopTimer(pendingDisconnectTimerId)
-  pendingDisconnectTimerId = 0
+  pendingDisconnectTimerId = null
   logger.log('Disconnect alert cancelled because the phone reconnected')
 }
 
@@ -73,12 +74,30 @@ function scheduleDisconnectAlert() {
     `Phone connection lost; waiting ${DISCONNECT_CONFIRMATION_DELAY_MS}ms before alerting`,
   )
 
+  // A revision token makes old callbacks harmless after any later connection change.
+  const disconnectRevision = connectionStateRevision
+
   // Ignore brief BLE drops. Only a sustained disconnect becomes an alert.
-  pendingDisconnectTimerId = createSysTimer(
+  const timerId = createSysTimer(
     false,
     DISCONNECT_CONFIRMATION_DELAY_MS,
     () => {
-      pendingDisconnectTimerId = 0
+      if (pendingDisconnectTimerId === timerId) {
+        pendingDisconnectTimerId = null
+      }
+
+      if (disconnectRevision !== connectionStateRevision) {
+        logger.log('Disconnect alert skipped because the connection state changed')
+        return
+      }
+
+      const actualConnectionState = connectStatus()
+      if (actualConnectionState !== false) {
+        // Recover if a reconnect event was missed, so the next disconnect can re-arm.
+        logger.log('Disconnect alert skipped because the phone is connected')
+        connectionStateMachine.update(actualConnectionState)
+        return
+      }
 
       if (currentConnectionState !== false) {
         logger.log('Disconnect alert skipped because the phone reconnected')
@@ -90,6 +109,8 @@ function scheduleDisconnectAlert() {
       disconnectNotificationSent = true
     },
   )
+
+  pendingDisconnectTimerId = timerId
 }
 
 AppService({
@@ -100,6 +121,7 @@ AppService({
       onStateChange: ({ connected, isInitialState, source }) => {
         const previousConnectionState = currentConnectionState
         currentConnectionState = connected
+        connectionStateRevision += 1
 
         if (connected) {
           cancelPendingDisconnectAlert()
