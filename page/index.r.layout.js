@@ -1,6 +1,22 @@
-import { px } from "@zos/utils";
+import { px } from '@zos/utils'
 
-export const TEXT_STYLE = {
-  x: px(0),
-  y: px(0),
+export const TITLE_STYLE = {
+  x: px(30),
+  y: px(96),
+  w: px(420),
+  h: px(40),
+}
+
+export const STATUS_STYLE = {
+  x: px(24),
+  y: px(174),
+  w: px(432),
+  h: px(76),
+}
+
+export const DETAIL_STYLE = {
+  x: px(42),
+  y: px(286),
+  w: px(396),
+  h: px(54),
 }
