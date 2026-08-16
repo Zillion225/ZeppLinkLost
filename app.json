@@ -2,7 +2,7 @@
   "configVersion": "v3",
   "app": {
     "appId": 22023,
-    "appName": "Empty",
+    "appName": "Link Lost",
     "appType": "app",
     "version": {
       "code": 1,
@@ -10,9 +10,12 @@
     },
     "icon": "icon.png",
     "vender": "zepp",
-    "description": "empty application"
+    "description": "Alerts when the watch loses its phone connection"
   },
-  "permissions": [],
+  "permissions": [
+    "device:os.bg_service",
+    "device:os.notification"
+  ],
   "runtime": {
     "apiVersion": {
       "compatible": "4.0",
@@ -30,6 +33,11 @@
         },
         "app-side": {
           "path": "app-side/index"
+        },
+        "app-service": {
+          "services": [
+            "app-service/connection-monitor"
+          ]
         }
       },
       "platforms": [
@@ -42,7 +50,7 @@
   },
   "i18n": {
     "en-US": {
-      "appName": "Empty"
+      "appName": "Link Lost"
     }
   },
   "defaultLanguage": "en-US"
