@@ -6,18 +6,40 @@ import {
   removeListener,
 } from '@zos/ble'
 import { notify } from '@zos/notification'
+import { SystemSounds } from '@zos/sensor'
 import { createSysTimer, stopTimer } from '@zos/timer'
 import { log } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
+import { getDisconnectDelayMs } from '../utils/settings'
 
 const logger = log.getLogger('linklost-service')
-const DISCONNECT_CONFIRMATION_DELAY_MS = 10000
+const systemSounds = new SystemSounds()
 
 let connectionStateMachine
 let currentConnectionState = null
 let pendingDisconnectTimerId = null
 let disconnectNotificationSent = false
 let connectionStateRevision = 0
+
+function playDisconnectSound() {
+  if (!systemSounds.getEnabled()) {
+    logger.log('Link Lost sound is disabled in the watch system settings')
+    return
+  }
+
+  systemSounds.start(systemSounds.getSourceType().MESSAGE)
+  logger.log('Played Link Lost disconnect sound')
+}
+
+function playReconnectSound() {
+  if (!systemSounds.getEnabled()) {
+    logger.log('Link Lost sound is disabled in the watch system settings')
+    return
+  }
+
+  systemSounds.start(systemSounds.getSourceType().ACHIEVE)
+  logger.log('Played Link Lost reconnect sound')
+}
 
 function handleConnectionChange(status) {
   if (typeof status !== 'boolean') {
@@ -41,6 +63,10 @@ function sendDisconnectNotification() {
       ? `Link Lost disconnect notification delivered: ${notificationId}`
       : 'Link Lost disconnect notification delivery failed',
   )
+
+  if (notificationId) {
+    playDisconnectSound()
+  }
 }
 
 function sendReconnectNotification() {
@@ -56,6 +82,10 @@ function sendReconnectNotification() {
       ? `Link Lost reconnect notification delivered: ${notificationId}`
       : 'Link Lost reconnect notification delivery failed',
   )
+
+  if (notificationId) {
+    playReconnectSound()
+  }
 }
 
 function cancelPendingDisconnectAlert() {
@@ -70,8 +100,9 @@ function cancelPendingDisconnectAlert() {
 
 function scheduleDisconnectAlert() {
   cancelPendingDisconnectAlert()
+  const disconnectDelayMs = getDisconnectDelayMs()
   logger.log(
-    `Phone connection lost; waiting ${DISCONNECT_CONFIRMATION_DELAY_MS}ms before alerting`,
+    `Phone connection lost; waiting ${disconnectDelayMs}ms before alerting`,
   )
 
   // A revision token makes old callbacks harmless after any later connection change.
@@ -80,7 +111,7 @@ function scheduleDisconnectAlert() {
   // Ignore brief BLE drops. Only a sustained disconnect becomes an alert.
   const timerId = createSysTimer(
     false,
-    DISCONNECT_CONFIRMATION_DELAY_MS,
+    disconnectDelayMs,
     () => {
       if (pendingDisconnectTimerId === timerId) {
         pendingDisconnectTimerId = null

@@ -20,3 +20,17 @@ export const DETAIL_STYLE = {
   w: px(396),
   h: px(54),
 }
+
+export const DELAY_LABEL_STYLE = {
+  x: px(30),
+  y: px(350),
+  w: px(420),
+  h: px(24),
+}
+
+export const DELAY_BUTTON_STYLE = {
+  x: px(80),
+  y: px(382),
+  w: px(320),
+  h: px(58),
+}

@@ -11,6 +11,12 @@ import { Vibrator, VIBRATOR_SCENE_NOTIFICATION } from '@zos/sensor'
 import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
+import {
+  formatDisconnectDelay,
+  getDisconnectDelayMs,
+  getNextDisconnectDelayMs,
+  setDisconnectDelayMs,
+} from '../utils/settings'
 import * as Styles from 'zosLoader:./index.[pf].layout.js'
 
 const logger = log.getLogger('linklost')
@@ -20,6 +26,7 @@ const BACKGROUND_SERVICE_FILE = 'app-service/connection-monitor'
 
 let statusWidget
 let detailWidget
+let delayButton
 let connectionStateMachine
 let backgroundServiceOwnsAlerts = false
 let backgroundServiceRequested = false
@@ -60,6 +67,27 @@ function handleConnectionChange(status) {
   }
 
   connectionStateMachine.update(status)
+}
+
+function renderDelaySetting() {
+  if (!delayButton) {
+    return
+  }
+
+  delayButton.setProperty(
+    prop.TEXT,
+    `Alert delay: ${formatDisconnectDelay(getDisconnectDelayMs())}`,
+  )
+}
+
+function cycleDisconnectDelay() {
+  const currentDelay = getDisconnectDelayMs()
+  const nextDelay = getNextDisconnectDelayMs(currentDelay)
+
+  // The service reads this saved value when the next disconnect starts.
+  setDisconnectDelayMs(nextDelay)
+  renderDelaySetting()
+  logger.log(`Disconnect delay changed to ${formatDisconnectDelay(nextDelay)}`)
 }
 
 function registerPageConnectionListener() {
@@ -181,6 +209,28 @@ Page({
       text_style: text_style.WRAP,
     })
 
+    createWidget(widget.TEXT, {
+      ...Styles.DELAY_LABEL_STYLE,
+      color: 0xaec4dc,
+      text: 'ALERT DELAY',
+      text_size: 16,
+      align_h: align.CENTER_H,
+      align_v: align.CENTER_V,
+      text_style: text_style.NONE,
+    })
+
+    delayButton = createWidget(widget.BUTTON, {
+      ...Styles.DELAY_BUTTON_STYLE,
+      radius: 14,
+      normal_color: 0x1e5b8f,
+      press_color: 0x4a8fc7,
+      color: 0xffffff,
+      text: 'Alert delay',
+      text_size: 19,
+      click_func: cycleDisconnectDelay,
+    })
+    renderDelaySetting()
+
     // Render the status captured in onInit after the widgets exist.
     const initialStatus = connectionStateMachine.getCurrentState()
     if (typeof initialStatus === 'boolean') {
@@ -204,6 +254,7 @@ Page({
     }
     statusWidget = undefined
     detailWidget = undefined
+    delayButton = undefined
     connectionStateMachine = undefined
   },
 })

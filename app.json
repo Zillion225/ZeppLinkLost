@@ -14,7 +14,8 @@
   },
   "permissions": [
     "device:os.bg_service",
-    "device:os.notification"
+    "device:os.notification",
+    "device:os.local_storage"
   ],
   "runtime": {
     "apiVersion": {
