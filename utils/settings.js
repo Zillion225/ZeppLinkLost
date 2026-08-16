@@ -11,6 +11,7 @@ export const ALARM_SOUND_OPTIONS = [
 const DISCONNECT_DELAY_STORAGE_KEY = 'disconnect-delay-ms'
 const ALARM_STOP_TIME_STORAGE_KEY = 'alarm-stop-time-ms'
 const ALARM_SOUND_STORAGE_KEY = 'alarm-sound-id'
+const MONITOR_ENABLED_STORAGE_KEY = 'monitor-enabled'
 const DEFAULT_DISCONNECT_DELAY_MS = DISCONNECT_DELAY_OPTIONS_MS[0]
 const DEFAULT_ALARM_STOP_TIME_MS = ALARM_STOP_TIME_OPTIONS_MS[1]
 const DEFAULT_ALARM_SOUND_ID = ALARM_SOUND_OPTIONS[0].id
@@ -115,4 +116,13 @@ export function getNextAlarmSoundId(currentSoundId) {
   const nextIndex = (currentIndex + 1) % ALARM_SOUND_OPTIONS.length
 
   return ALARM_SOUND_OPTIONS[nextIndex].id
+}
+
+export function getMonitoringEnabled() {
+  return localStorage.getItem(MONITOR_ENABLED_STORAGE_KEY, 'true') !== 'false'
+}
+
+export function setMonitoringEnabled(enabled) {
+  localStorage.setItem(MONITOR_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+  return enabled
 }

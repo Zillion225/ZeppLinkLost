@@ -6,23 +6,31 @@ import {
   removeListener,
 } from '@zos/ble'
 import { queryPermission, requestPermission } from '@zos/app'
-import { getAllAppServices, start as startAppService } from '@zos/app-service'
+import {
+  getAllAppServices,
+  start as startAppService,
+  stop as stopAppService,
+} from '@zos/app-service'
+import { SCROLL_MODE_SWIPER, setScrollMode } from '@zos/page'
 import { Vibrator, VIBRATOR_SCENE_NOTIFICATION } from '@zos/sensor'
 import { align, createWidget, prop, text_style, widget } from '@zos/ui'
-import { log } from '@zos/utils'
+import { log, px } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
 import {
+  ALARM_SOUND_OPTIONS,
   formatAlarmStopTime,
   formatDisconnectDelay,
   getAlarmSound,
   getAlarmStopTimeMs,
+  getDisconnectDelayMs,
+  getMonitoringEnabled,
   getNextAlarmSoundId,
   getNextAlarmStopTimeMs,
-  getDisconnectDelayMs,
   getNextDisconnectDelayMs,
   setAlarmSound,
   setAlarmStopTimeMs,
   setDisconnectDelayMs,
+  setMonitoringEnabled,
 } from '../utils/settings'
 import * as Styles from 'zosLoader:./index.[pf].layout.js'
 
@@ -30,23 +38,53 @@ const logger = log.getLogger('linklost')
 const vibrator = new Vibrator()
 const BACKGROUND_PERMISSION = 'device:os.bg_service'
 const BACKGROUND_SERVICE_FILE = 'app-service/connection-monitor'
+const SCREEN_HEIGHT = 480
 
 let statusWidget
 let detailWidget
-let delayButton
-let alarmStopButton
-let alarmSoundButton
+let monitorButton
+let delayValueWidget
+let delayActionButton
+let stopValueWidget
+let stopActionButton
+let soundValueWidget
+let soundActionButton
 let connectionStateMachine
+let monitorEnabled = getMonitoringEnabled()
 let backgroundServiceOwnsAlerts = false
 let backgroundServiceRequested = false
 let pageConnectionListenerRegistered = false
 
+function onScreen(style, screenIndex) {
+  return {
+    ...style,
+    y: style.y + px(SCREEN_HEIGHT * screenIndex),
+  }
+}
+
+function isBackgroundMonitorRunning() {
+  return getAllAppServices().some(
+    (service) =>
+      service === BACKGROUND_SERVICE_FILE ||
+      service === `${BACKGROUND_SERVICE_FILE}.js`,
+  )
+}
+
+function renderMonitorButton() {
+  if (!monitorButton) {
+    return
+  }
+
+  monitorButton.setProperty(
+    prop.TEXT,
+    monitorEnabled ? 'MONITOR: ON' : 'MONITOR: OFF',
+  )
+}
+
 function renderConnectionStatus({ connected, isInitialState, source }) {
   const statusText = connected ? 'CONNECTED' : 'DISCONNECTED'
   const statusColor = connected ? 0x58d68d : 0xff6b7a
-  const detailText = connected
-    ? 'Monitoring phone connection'
-    : 'Phone connection lost'
+  const detailText = monitorEnabled ? 'Monitor is active' : 'Monitor is turned off'
 
   logger.log(`${source}: ${statusText}${isInitialState ? ' (initial)' : ''}`)
 
@@ -59,9 +97,20 @@ function renderConnectionStatus({ connected, isInitialState, source }) {
   detailWidget.setProperty(prop.TEXT, detailText)
 }
 
+function refreshConnectionStatus() {
+  const currentState = connectionStateMachine.getCurrentState()
+  if (typeof currentState === 'boolean') {
+    renderConnectionStatus({
+      connected: currentState,
+      isInitialState: false,
+      source: 'monitor-toggle',
+    })
+  }
+}
+
 function alertOnDisconnect() {
-  if (backgroundServiceOwnsAlerts) {
-    logger.log('Disconnect alert is owned by the background monitor')
+  if (!monitorEnabled || backgroundServiceOwnsAlerts) {
+    logger.log('Disconnect alert is owned by the background monitor or disabled')
     return
   }
 
@@ -78,66 +127,18 @@ function handleConnectionChange(status) {
   connectionStateMachine.update(status)
 }
 
-function renderDelaySetting() {
-  if (!delayButton) {
+function removePageConnectionListener() {
+  if (!pageConnectionListenerRegistered) {
     return
   }
 
-  delayButton.setProperty(
-    prop.TEXT,
-    `Alert delay: ${formatDisconnectDelay(getDisconnectDelayMs())}`,
-  )
-}
-
-function cycleDisconnectDelay() {
-  const currentDelay = getDisconnectDelayMs()
-  const nextDelay = getNextDisconnectDelayMs(currentDelay)
-
-  // The service reads this saved value when the next disconnect starts.
-  setDisconnectDelayMs(nextDelay)
-  renderDelaySetting()
-  logger.log(`Disconnect delay changed to ${formatDisconnectDelay(nextDelay)}`)
-}
-
-function renderAlarmStopSetting() {
-  if (!alarmStopButton) {
-    return
-  }
-
-  alarmStopButton.setProperty(
-    prop.TEXT,
-    `Auto-stop: ${formatAlarmStopTime(getAlarmStopTimeMs())}`,
-  )
-}
-
-function cycleAlarmStopTime() {
-  const currentStopTime = getAlarmStopTimeMs()
-  const nextStopTime = getNextAlarmStopTimeMs(currentStopTime)
-
-  setAlarmStopTimeMs(nextStopTime)
-  renderAlarmStopSetting()
-  logger.log(`Alarm auto-stop changed to ${formatAlarmStopTime(nextStopTime)}`)
-}
-
-function renderAlarmSoundSetting() {
-  if (!alarmSoundButton) {
-    return
-  }
-
-  alarmSoundButton.setProperty(prop.TEXT, `Sound: ${getAlarmSound().label}`)
-}
-
-function cycleAlarmSound() {
-  const currentSound = getAlarmSound()
-  const nextSoundId = getNextAlarmSoundId(currentSound.id)
-
-  setAlarmSound(nextSoundId)
-  renderAlarmSoundSetting()
-  logger.log(`Alarm sound changed to ${getAlarmSound().label}`)
+  removeListener()
+  pageConnectionListenerRegistered = false
+  logger.log('Foreground BLE connection listener removed')
 }
 
 function registerPageConnectionListener() {
-  if (pageConnectionListenerRegistered || backgroundServiceOwnsAlerts) {
+  if (!monitorEnabled || pageConnectionListenerRegistered || backgroundServiceOwnsAlerts) {
     return
   }
 
@@ -150,19 +151,32 @@ function registerPageConnectionListener() {
   logger.log('Foreground BLE connection listener registered as fallback')
 }
 
-function startBackgroundMonitor() {
-  if (backgroundServiceRequested || backgroundServiceOwnsAlerts) {
+function stopBackgroundMonitor() {
+  if (!isBackgroundMonitorRunning()) {
+    backgroundServiceOwnsAlerts = false
     return
   }
 
-  const runningServices = getAllAppServices()
-  const isAlreadyRunning = runningServices.some(
-    (service) =>
-      service === BACKGROUND_SERVICE_FILE ||
-      service === `${BACKGROUND_SERVICE_FILE}.js`,
-  )
+  stopAppService({
+    file: BACKGROUND_SERVICE_FILE,
+    complete_func: ({ result }) => {
+      backgroundServiceOwnsAlerts = false
+      backgroundServiceRequested = false
+      logger.log(`Background connection monitor stopped: ${result}`)
 
-  if (isAlreadyRunning) {
+      if (monitorEnabled) {
+        enableBackgroundMonitor()
+      }
+    },
+  })
+}
+
+function startBackgroundMonitor() {
+  if (!monitorEnabled || backgroundServiceRequested || backgroundServiceOwnsAlerts) {
+    return
+  }
+
+  if (isBackgroundMonitorRunning()) {
     backgroundServiceOwnsAlerts = true
     logger.log('Background connection monitor is already running')
     return
@@ -173,14 +187,21 @@ function startBackgroundMonitor() {
     file: BACKGROUND_SERVICE_FILE,
     reload: true,
     complete_func: ({ result }) => {
-      backgroundServiceOwnsAlerts = result
+      backgroundServiceRequested = false
 
+      if (!monitorEnabled) {
+        if (result) {
+          stopBackgroundMonitor()
+        }
+        return
+      }
+
+      backgroundServiceOwnsAlerts = result
       if (result) {
         logger.log('Background connection monitor started')
         return
       }
 
-      backgroundServiceRequested = false
       logger.warn('Background connection monitor could not start')
       registerPageConnectionListener()
     },
@@ -213,6 +234,138 @@ function enableBackgroundMonitor() {
   })
 }
 
+function toggleMonitor() {
+  monitorEnabled = !monitorEnabled
+  setMonitoringEnabled(monitorEnabled)
+  renderMonitorButton()
+  refreshConnectionStatus()
+
+  if (monitorEnabled) {
+    enableBackgroundMonitor()
+    return
+  }
+
+  removePageConnectionListener()
+  stopBackgroundMonitor()
+  logger.log('Connection monitor disabled by the user')
+}
+
+function renderDelaySetting() {
+  const currentDelay = getDisconnectDelayMs()
+  const nextDelay = getNextDisconnectDelayMs(currentDelay)
+
+  delayValueWidget.setProperty(prop.TEXT, formatDisconnectDelay(currentDelay))
+  delayActionButton.setProperty(prop.TEXT, `Next: ${formatDisconnectDelay(nextDelay)}`)
+}
+
+function cycleDelay() {
+  const nextDelay = getNextDisconnectDelayMs(getDisconnectDelayMs())
+
+  // The background monitor reads this saved value when the next disconnect starts.
+  setDisconnectDelayMs(nextDelay)
+  renderDelaySetting()
+  logger.log(`Disconnect delay changed to ${formatDisconnectDelay(nextDelay)}`)
+}
+
+function renderStopSetting() {
+  const currentStopTime = getAlarmStopTimeMs()
+  const nextStopTime = getNextAlarmStopTimeMs(currentStopTime)
+
+  stopValueWidget.setProperty(prop.TEXT, formatAlarmStopTime(currentStopTime))
+  stopActionButton.setProperty(prop.TEXT, `Next: ${formatAlarmStopTime(nextStopTime)}`)
+}
+
+function cycleStopTime() {
+  const nextStopTime = getNextAlarmStopTimeMs(getAlarmStopTimeMs())
+
+  setAlarmStopTimeMs(nextStopTime)
+  renderStopSetting()
+  logger.log(`Alarm auto-stop changed to ${formatAlarmStopTime(nextStopTime)}`)
+}
+
+function renderSoundSetting() {
+  const currentSound = getAlarmSound()
+  const nextSoundId = getNextAlarmSoundId(currentSound.id)
+  const nextSound =
+    ALARM_SOUND_OPTIONS.find((sound) => sound.id === nextSoundId) ||
+    ALARM_SOUND_OPTIONS[0]
+
+  soundValueWidget.setProperty(prop.TEXT, currentSound.label)
+  soundActionButton.setProperty(prop.TEXT, `Next: ${nextSound.label}`)
+}
+
+function cycleSound() {
+  const nextSoundId = getNextAlarmSoundId(getAlarmSound().id)
+
+  setAlarmSound(nextSoundId)
+  renderSoundSetting()
+  logger.log(`Alarm sound changed to ${getAlarmSound().label}`)
+}
+
+function buildSettingScreen({
+  screenIndex,
+  title,
+  instruction,
+  color,
+  buttonColor,
+  buttonPressColor,
+  onValueWidgetsReady,
+  onPress,
+}) {
+  createWidget(widget.TEXT, {
+    ...onScreen(Styles.SETTING_TITLE_STYLE, screenIndex),
+    color,
+    text: title,
+    text_size: 28,
+    align_h: align.CENTER_H,
+    align_v: align.CENTER_V,
+    text_style: text_style.NONE,
+  })
+
+  createWidget(widget.TEXT, {
+    ...onScreen(Styles.SETTING_INSTRUCTION_STYLE, screenIndex),
+    color: 0xc6d5e3,
+    text: instruction,
+    text_size: 19,
+    align_h: align.CENTER_H,
+    align_v: align.CENTER_V,
+    text_style: text_style.NONE,
+  })
+
+  const valueWidget = createWidget(widget.TEXT, {
+    ...onScreen(Styles.SETTING_VALUE_STYLE, screenIndex),
+    color,
+    text: '--',
+    text_size: title === 'ALARM SOUND' ? 52 : 58,
+    align_h: align.CENTER_H,
+    align_v: align.CENTER_V,
+    text_style: text_style.NONE,
+  })
+
+  const actionButton = createWidget(widget.BUTTON, {
+    ...onScreen(Styles.SETTING_BUTTON_STYLE, screenIndex),
+    radius: 16,
+    normal_color: buttonColor,
+    press_color: buttonPressColor,
+    color: 0xffffff,
+    text: 'Next',
+    text_size: 26,
+    click_func: onPress,
+  })
+
+  createWidget(widget.TEXT, {
+    ...onScreen(Styles.SETTING_HINT_STYLE, screenIndex),
+    color: 0x8ea4ba,
+    text: 'Tap button to change',
+    text_size: 17,
+    align_h: align.CENTER_H,
+    align_v: align.CENTER_V,
+    text_style: text_style.NONE,
+  })
+
+  onValueWidgetsReady(valueWidget, actionButton)
+}
+
 Page({
   onInit() {
     connectionStateMachine = createConnectionStateMachine({
@@ -221,132 +374,149 @@ Page({
     })
 
     connectionStateMachine.initialize(connectStatus())
-    enableBackgroundMonitor()
+    if (monitorEnabled) {
+      enableBackgroundMonitor()
+    }
   },
 
   build() {
+    setScrollMode({
+      mode: SCROLL_MODE_SWIPER,
+      options: {
+        height: SCREEN_HEIGHT,
+        count: 4,
+        modeParams: {
+          crown_enable: true,
+          on_page: (pageIndex) => logger.log(`Settings screen: ${pageIndex}`),
+        },
+      },
+    })
+
     createWidget(widget.TEXT, {
-      ...Styles.TITLE_STYLE,
+      ...Styles.MAIN_TITLE_STYLE,
       color: 0xaec4dc,
       text: 'PHONE CONNECTION',
-      text_size: 20,
+      text_size: 26,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
       text_style: text_style.NONE,
     })
 
     statusWidget = createWidget(widget.TEXT, {
-      ...Styles.STATUS_STYLE,
+      ...Styles.MAIN_STATUS_STYLE,
       color: 0xffffff,
       text: 'CHECKING...',
-      text_size: 30,
+      text_size: 42,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
       text_style: text_style.NONE,
     })
 
     detailWidget = createWidget(widget.TEXT, {
-      ...Styles.DETAIL_STYLE,
+      ...Styles.MAIN_DETAIL_STYLE,
       color: 0x8ea4ba,
       text: 'Reading connection status',
-      text_size: 16,
+      text_size: 20,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
       text_style: text_style.WRAP,
     })
 
     createWidget(widget.TEXT, {
-      ...Styles.DELAY_LABEL_STYLE,
+      ...Styles.MONITOR_LABEL_STYLE,
       color: 0xaec4dc,
-      text: 'ALERT DELAY',
-      text_size: 14,
+      text: 'CONNECTION MONITOR',
+      text_size: 20,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
       text_style: text_style.NONE,
     })
 
-    delayButton = createWidget(widget.BUTTON, {
-      ...Styles.DELAY_BUTTON_STYLE,
-      radius: 14,
-      normal_color: 0x1e5b8f,
-      press_color: 0x4a8fc7,
+    monitorButton = createWidget(widget.BUTTON, {
+      ...Styles.MONITOR_BUTTON_STYLE,
+      radius: 16,
+      normal_color: 0x21734d,
+      press_color: 0x4aa97a,
       color: 0xffffff,
-      text: 'Alert delay',
-      text_size: 17,
-      click_func: cycleDisconnectDelay,
+      text: 'MONITOR',
+      text_size: 28,
+      click_func: toggleMonitor,
     })
+    renderMonitorButton()
+
+    createWidget(widget.TEXT, {
+      ...Styles.SWIPE_HINT_STYLE,
+      color: 0x8ea4ba,
+      text: 'Swipe for settings',
+      text_size: 17,
+      align_h: align.CENTER_H,
+      align_v: align.CENTER_V,
+      text_style: text_style.NONE,
+    })
+
+    buildSettingScreen({
+      screenIndex: 1,
+      title: 'ALERT DELAY',
+      instruction: 'Wait after disconnection',
+      color: 0x59d98e,
+      buttonColor: 0x1e5b8f,
+      buttonPressColor: 0x4a8fc7,
+      onValueWidgetsReady: (value, button) => {
+        delayValueWidget = value
+        delayActionButton = button
+      },
+      onPress: cycleDelay,
+    })
+
+    buildSettingScreen({
+      screenIndex: 2,
+      title: 'ALARM AUTO-STOP',
+      instruction: 'Stop alarm after',
+      color: 0xd0b3f5,
+      buttonColor: 0x754a9e,
+      buttonPressColor: 0x9c73c6,
+      onValueWidgetsReady: (value, button) => {
+        stopValueWidget = value
+        stopActionButton = button
+      },
+      onPress: cycleStopTime,
+    })
+
+    buildSettingScreen({
+      screenIndex: 3,
+      title: 'ALARM SOUND',
+      instruction: 'Choose alarm tone',
+      color: 0xf0c1a9,
+      buttonColor: 0xa25735,
+      buttonPressColor: 0xd48762,
+      onValueWidgetsReady: (value, button) => {
+        soundValueWidget = value
+        soundActionButton = button
+      },
+      onPress: cycleSound,
+    })
+
     renderDelaySetting()
-
-    createWidget(widget.TEXT, {
-      ...Styles.ALARM_STOP_LABEL_STYLE,
-      color: 0xaec4dc,
-      text: 'ALARM AUTO-STOP',
-      text_size: 14,
-      align_h: align.CENTER_H,
-      align_v: align.CENTER_V,
-      text_style: text_style.NONE,
-    })
-
-    alarmStopButton = createWidget(widget.BUTTON, {
-      ...Styles.ALARM_STOP_BUTTON_STYLE,
-      radius: 12,
-      normal_color: 0x754a9e,
-      press_color: 0x9c73c6,
-      color: 0xffffff,
-      text: 'Alarm auto-stop',
-      text_size: 17,
-      click_func: cycleAlarmStopTime,
-    })
-    renderAlarmStopSetting()
-
-    createWidget(widget.TEXT, {
-      ...Styles.ALARM_SOUND_LABEL_STYLE,
-      color: 0xaec4dc,
-      text: 'ALARM SOUND',
-      text_size: 14,
-      align_h: align.CENTER_H,
-      align_v: align.CENTER_V,
-      text_style: text_style.NONE,
-    })
-
-    alarmSoundButton = createWidget(widget.BUTTON, {
-      ...Styles.ALARM_SOUND_BUTTON_STYLE,
-      radius: 12,
-      normal_color: 0xa25735,
-      press_color: 0xd48762,
-      color: 0xffffff,
-      text: 'Alarm sound',
-      text_size: 17,
-      click_func: cycleAlarmSound,
-    })
-    renderAlarmSoundSetting()
-
-    // Render the status captured in onInit after the widgets exist.
-    const initialStatus = connectionStateMachine.getCurrentState()
-    if (typeof initialStatus === 'boolean') {
-      renderConnectionStatus({
-        connected: initialStatus,
-        isInitialState: true,
-        source: 'initial-render',
-      })
-    }
+    renderStopSetting()
+    renderSoundSetting()
+    refreshConnectionStatus()
   },
 
   onDestroy() {
-    if (pageConnectionListenerRegistered) {
-      removeListener()
-      pageConnectionListenerRegistered = false
-      logger.log('Foreground BLE connection listener removed')
-    }
+    removePageConnectionListener()
 
     if (!backgroundServiceRequested && !backgroundServiceOwnsAlerts) {
       disConnect()
     }
     statusWidget = undefined
     detailWidget = undefined
-    delayButton = undefined
-    alarmStopButton = undefined
-    alarmSoundButton = undefined
+    monitorButton = undefined
+    delayValueWidget = undefined
+    delayActionButton = undefined
+    stopValueWidget = undefined
+    stopActionButton = undefined
+    soundValueWidget = undefined
+    soundActionButton = undefined
     connectionStateMachine = undefined
   },
 })
