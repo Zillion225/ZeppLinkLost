@@ -12,9 +12,16 @@ import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
 import {
+  formatAlarmStopTime,
   formatDisconnectDelay,
+  getAlarmSound,
+  getAlarmStopTimeMs,
+  getNextAlarmSoundId,
+  getNextAlarmStopTimeMs,
   getDisconnectDelayMs,
   getNextDisconnectDelayMs,
+  setAlarmSound,
+  setAlarmStopTimeMs,
   setDisconnectDelayMs,
 } from '../utils/settings'
 import * as Styles from 'zosLoader:./index.[pf].layout.js'
@@ -27,6 +34,8 @@ const BACKGROUND_SERVICE_FILE = 'app-service/connection-monitor'
 let statusWidget
 let detailWidget
 let delayButton
+let alarmStopButton
+let alarmSoundButton
 let connectionStateMachine
 let backgroundServiceOwnsAlerts = false
 let backgroundServiceRequested = false
@@ -88,6 +97,43 @@ function cycleDisconnectDelay() {
   setDisconnectDelayMs(nextDelay)
   renderDelaySetting()
   logger.log(`Disconnect delay changed to ${formatDisconnectDelay(nextDelay)}`)
+}
+
+function renderAlarmStopSetting() {
+  if (!alarmStopButton) {
+    return
+  }
+
+  alarmStopButton.setProperty(
+    prop.TEXT,
+    `Auto-stop: ${formatAlarmStopTime(getAlarmStopTimeMs())}`,
+  )
+}
+
+function cycleAlarmStopTime() {
+  const currentStopTime = getAlarmStopTimeMs()
+  const nextStopTime = getNextAlarmStopTimeMs(currentStopTime)
+
+  setAlarmStopTimeMs(nextStopTime)
+  renderAlarmStopSetting()
+  logger.log(`Alarm auto-stop changed to ${formatAlarmStopTime(nextStopTime)}`)
+}
+
+function renderAlarmSoundSetting() {
+  if (!alarmSoundButton) {
+    return
+  }
+
+  alarmSoundButton.setProperty(prop.TEXT, `Sound: ${getAlarmSound().label}`)
+}
+
+function cycleAlarmSound() {
+  const currentSound = getAlarmSound()
+  const nextSoundId = getNextAlarmSoundId(currentSound.id)
+
+  setAlarmSound(nextSoundId)
+  renderAlarmSoundSetting()
+  logger.log(`Alarm sound changed to ${getAlarmSound().label}`)
 }
 
 function registerPageConnectionListener() {
@@ -183,7 +229,7 @@ Page({
       ...Styles.TITLE_STYLE,
       color: 0xaec4dc,
       text: 'PHONE CONNECTION',
-      text_size: 22,
+      text_size: 20,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
       text_style: text_style.NONE,
@@ -193,7 +239,7 @@ Page({
       ...Styles.STATUS_STYLE,
       color: 0xffffff,
       text: 'CHECKING...',
-      text_size: 40,
+      text_size: 30,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
       text_style: text_style.NONE,
@@ -203,7 +249,7 @@ Page({
       ...Styles.DETAIL_STYLE,
       color: 0x8ea4ba,
       text: 'Reading connection status',
-      text_size: 18,
+      text_size: 16,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
       text_style: text_style.WRAP,
@@ -213,7 +259,7 @@ Page({
       ...Styles.DELAY_LABEL_STYLE,
       color: 0xaec4dc,
       text: 'ALERT DELAY',
-      text_size: 16,
+      text_size: 14,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
       text_style: text_style.NONE,
@@ -226,10 +272,54 @@ Page({
       press_color: 0x4a8fc7,
       color: 0xffffff,
       text: 'Alert delay',
-      text_size: 19,
+      text_size: 17,
       click_func: cycleDisconnectDelay,
     })
     renderDelaySetting()
+
+    createWidget(widget.TEXT, {
+      ...Styles.ALARM_STOP_LABEL_STYLE,
+      color: 0xaec4dc,
+      text: 'ALARM AUTO-STOP',
+      text_size: 14,
+      align_h: align.CENTER_H,
+      align_v: align.CENTER_V,
+      text_style: text_style.NONE,
+    })
+
+    alarmStopButton = createWidget(widget.BUTTON, {
+      ...Styles.ALARM_STOP_BUTTON_STYLE,
+      radius: 12,
+      normal_color: 0x754a9e,
+      press_color: 0x9c73c6,
+      color: 0xffffff,
+      text: 'Alarm auto-stop',
+      text_size: 17,
+      click_func: cycleAlarmStopTime,
+    })
+    renderAlarmStopSetting()
+
+    createWidget(widget.TEXT, {
+      ...Styles.ALARM_SOUND_LABEL_STYLE,
+      color: 0xaec4dc,
+      text: 'ALARM SOUND',
+      text_size: 14,
+      align_h: align.CENTER_H,
+      align_v: align.CENTER_V,
+      text_style: text_style.NONE,
+    })
+
+    alarmSoundButton = createWidget(widget.BUTTON, {
+      ...Styles.ALARM_SOUND_BUTTON_STYLE,
+      radius: 12,
+      normal_color: 0xa25735,
+      press_color: 0xd48762,
+      color: 0xffffff,
+      text: 'Alarm sound',
+      text_size: 17,
+      click_func: cycleAlarmSound,
+    })
+    renderAlarmSoundSetting()
 
     // Render the status captured in onInit after the widgets exist.
     const initialStatus = connectionStateMachine.getCurrentState()
@@ -255,6 +345,8 @@ Page({
     statusWidget = undefined
     detailWidget = undefined
     delayButton = undefined
+    alarmStopButton = undefined
+    alarmSoundButton = undefined
     connectionStateMachine = undefined
   },
 })

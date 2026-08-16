@@ -11,7 +11,11 @@ import { SystemSounds } from '@zos/sensor'
 import { createSysTimer, stopTimer } from '@zos/timer'
 import { log } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
-import { getDisconnectDelayMs } from '../utils/settings'
+import {
+  getAlarmSound,
+  getAlarmStopTimeMs,
+  getDisconnectDelayMs,
+} from '../utils/settings'
 
 const logger = log.getLogger('linklost-service')
 const systemSounds = new SystemSounds()
@@ -24,8 +28,6 @@ let alarmStopTimerId = null
 let alarmIsPlaying = false
 let disconnectNotificationSent = false
 let connectionStateRevision = 0
-
-const ALARM_MAX_DURATION_MS = 10000
 
 alarmPlayer.addEventListener(alarmPlayer.event.PREPARE, (ready) => {
   if (!ready) {
@@ -57,24 +59,29 @@ function stopDisconnectAlarm(reason) {
 
 function playDisconnectAlarm() {
   stopDisconnectAlarm('starting a new alarm')
+  const selectedSound = getAlarmSound()
+  const alarmStopTimeMs = getAlarmStopTimeMs()
+
   alarmIsPlaying = true
   alarmPlayer.setSource(alarmPlayer.source.FILE, {
-    file: 'link-lost-alarm.mp3',
+    file: selectedSound.file,
   })
   alarmPlayer.prepare()
 
   // This is a safety cutoff when the user does not press Stop alarm.
-  const timerId = createSysTimer(false, ALARM_MAX_DURATION_MS, () => {
+  const timerId = createSysTimer(false, alarmStopTimeMs, () => {
     if (alarmStopTimerId === timerId) {
       alarmStopTimerId = null
       alarmPlayer.stop()
       alarmIsPlaying = false
-      logger.log('Link Lost alarm stopped after 10 seconds')
+      logger.log(`Link Lost alarm stopped after ${alarmStopTimeMs}ms`)
     }
   })
 
   alarmStopTimerId = timerId
-  logger.log('Started Link Lost repeating alarm')
+  logger.log(
+    `Started Link Lost ${selectedSound.label} alarm for ${alarmStopTimeMs}ms`,
+  )
 }
 
 function playReconnectSound() {
