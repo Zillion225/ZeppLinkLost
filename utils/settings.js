@@ -14,7 +14,8 @@ const ALARM_SOUND_STORAGE_KEY = 'alarm-sound-id'
 const MONITOR_ENABLED_STORAGE_KEY = 'monitor-enabled'
 const VIBRATION_ENABLED_STORAGE_KEY = 'vibration-enabled'
 const DEBUG_SIMULATED_CONNECTED_STORAGE_KEY = 'debug-simulated-connected'
-const DEBUG_SIMULATION_ACTIVE_STORAGE_KEY = 'debug-simulation-active'
+// v2 intentionally resets the old implicit mode that could disable real BLE.
+const DEBUG_SIMULATION_ACTIVE_STORAGE_KEY = 'debug-mode-enabled-v2'
 const DEFAULT_DISCONNECT_DELAY_MS = DISCONNECT_DELAY_OPTIONS_MS[0]
 const DEFAULT_ALARM_STOP_TIME_MS = ALARM_STOP_TIME_OPTIONS_MS[1]
 const DEFAULT_ALARM_SOUND_ID = ALARM_SOUND_OPTIONS[0].id

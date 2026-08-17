@@ -1,4 +1,3 @@
-import { exit as exitAppService } from '@zos/app-service'
 import {
   addListener,
   connectStatus,
@@ -6,55 +5,42 @@ import {
   disConnect,
   removeListener,
 } from '@zos/ble'
-import { createSysTimer, stopTimer } from '@zos/timer'
 import { log } from '@zos/utils'
 import { createConnectionAlertController } from '../core/connection-alert-controller'
-import { createDebugConnectionInput } from '../core/debug-connection-input'
+import { parseServiceMode, SERVICE_MODE_DEBUG } from '../core/service-mode'
 import { createZeppAlertRuntime } from '../platform/zepp-alert-runtime'
-import { DEBUG_PAGE_ENABLED } from '../utils/developer'
 import {
   getAlarmSound,
   getAlarmStopTimeMs,
   getDebugSimulatedConnected,
-  getDebugSimulationActive,
   getDisconnectDelayMs,
-  getMonitoringEnabled,
   getVibrationEnabled,
 } from '../utils/settings'
 
 const logger = log.getLogger('linklost-service')
 const SERVICE_FILE = 'app-service/connection-monitor'
-const DEBUG_INPUT_POLL_MS = 500
 
 let controller
-let debugInput
-let debugInputTimerId = null
+let debugMode = false
 let bleListenerRegistered = false
 
-function readCurrentConnection() {
-  return DEBUG_PAGE_ENABLED && getDebugSimulationActive()
-    ? getDebugSimulatedConnected()
-    : connectStatus()
+function readConnection() {
+  return debugMode ? getDebugSimulatedConnected() : connectStatus()
 }
 
 function handleConnectionChange(status) {
-  if (
-    controller &&
-    (!debugInput || !debugInput.isActive()) &&
-    typeof status === 'boolean'
-  ) {
+  if (!debugMode && controller && typeof status === 'boolean') {
     controller.updateConnection(status, 'ble-listener')
   }
 }
 
 function createController() {
   const runtime = createZeppAlertRuntime({
-    debug: getDebugSimulationActive,
+    debug: debugMode,
     serviceFile: SERVICE_FILE,
     logger,
   })
 
-  // All external values are adapters, while the workflow remains platform-free.
   controller = createConnectionAlertController({
     ...runtime,
     settings: {
@@ -63,7 +49,7 @@ function createController() {
       getDisconnectDelayMs,
       getVibrationEnabled,
     },
-    connection: { isConnected: readCurrentConnection },
+    connection: { isConnected: readConnection },
     onStateChange: ({ connected, isInitialState, source }) => {
       logger.log(
         `${source}: ${connected ? 'CONNECTED' : 'DISCONNECTED'}${
@@ -75,52 +61,36 @@ function createController() {
   })
 }
 
-function startBleMonitor() {
+function startProductionMonitor() {
   createConnect((index, data, size) => {
     logger.debug(`Received companion data: index=${index}, size=${size}`)
   })
   controller.initialize(connectStatus())
   addListener(handleConnectionChange)
   bleListenerRegistered = true
-  logger.log('Background BLE connection listener registered')
+  logger.log('Production BLE listener registered')
 }
 
-function pollDebugInput() {
-  if (!debugInput) {
-    return
+function startDebugMonitor() {
+  // Supplying true then false creates the same transition used by real BLE.
+  controller.initialize(true)
+  if (!getDebugSimulatedConnected()) {
+    controller.updateConnection(false, 'debug-input')
   }
-
-  const wasActive = debugInput.isActive()
-  const active = debugInput.poll()
-
-  // A service started only for Debug should exit after the Debug page closes.
-  if (wasActive && !active && !getMonitoringEnabled()) {
-    exitAppService()
-  }
-}
-
-function startDebugInputChannel() {
-  if (!DEBUG_PAGE_ENABLED) {
-    return
-  }
-
-  debugInput = createDebugConnectionInput({
-    controller,
-    readActive: getDebugSimulationActive,
-    readSimulatedConnected: getDebugSimulatedConnected,
-    readActualConnected: connectStatus,
-  })
-  pollDebugInput()
-  debugInputTimerId = createSysTimer(true, DEBUG_INPUT_POLL_MS, pollDebugInput)
-  logger.log('Debug input channel started')
+  logger.log('Debug connection input initialized')
 }
 
 AppService({
-  onInit() {
-    logger.log('Connection monitor starting')
+  onInit(params) {
+    debugMode = parseServiceMode(params) === SERVICE_MODE_DEBUG
+    logger.log(`Connection monitor starting: ${debugMode ? 'DEBUG' : 'PRODUCTION'}`)
     createController()
-    startBleMonitor()
-    startDebugInputChannel()
+
+    if (debugMode) {
+      startDebugMonitor()
+    } else {
+      startProductionMonitor()
+    }
   },
 
   onEvent(event) {
@@ -134,14 +104,10 @@ AppService({
   },
 
   onDestroy() {
-    if (debugInputTimerId !== null) {
-      stopTimer(debugInputTimerId)
-      debugInputTimerId = null
+    // The Debug page stores CONNECTED before stopping this service.
+    if (debugMode && controller && getDebugSimulatedConnected()) {
+      controller.updateConnection(true, 'debug-input')
     }
-    if (debugInput && debugInput.isActive() && controller) {
-      controller.updateConnection(connectStatus(), 'debug-service-stop')
-    }
-    debugInput = undefined
 
     if (controller) {
       controller.destroy()

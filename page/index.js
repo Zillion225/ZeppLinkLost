@@ -24,6 +24,7 @@ import {
   formatDisconnectDelay,
   getAlarmSound,
   getAlarmStopTimeMs,
+  getDebugSimulationActive,
   getDisconnectDelayMs,
   getMonitoringEnabled,
   getNextAlarmSoundId,
@@ -135,7 +136,12 @@ function removePageConnectionListener() {
 }
 
 function registerPageConnectionListener() {
-  if (!monitorEnabled || pageConnectionListenerRegistered || backgroundServiceOwnsAlerts) {
+  if (
+    !monitorEnabled ||
+    getDebugSimulationActive() ||
+    pageConnectionListenerRegistered ||
+    backgroundServiceOwnsAlerts
+  ) {
     return
   }
 
@@ -170,6 +176,11 @@ function stopBackgroundMonitor() {
 
 function startBackgroundMonitor() {
   if (!monitorEnabled || backgroundServiceRequested || backgroundServiceOwnsAlerts) {
+    return
+  }
+
+  if (getDebugSimulationActive()) {
+    logger.log('Real Bluetooth monitor paused while Debug Mode is ON')
     return
   }
 

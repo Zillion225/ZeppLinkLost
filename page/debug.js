@@ -1,6 +1,7 @@
 import {
   getAllAppServices,
   start as startAppService,
+  stop as stopAppService,
 } from '@zos/app-service'
 import { SCROLL_MODE_FREE, setScrollMode } from '@zos/page'
 import { back } from '@zos/router'
@@ -9,6 +10,7 @@ import { log } from '@zos/utils'
 import { DEBUG_PAGE_ENABLED } from '../utils/developer'
 import {
   getDebugSimulatedConnected,
+  getDebugSimulationActive,
   getMonitoringEnabled,
   setDebugSimulatedConnected,
   setDebugSimulationActive,
@@ -19,9 +21,12 @@ const logger = log.getLogger('linklost-debug')
 const MONITOR_SERVICE_FILE = 'app-service/connection-monitor'
 
 let statusWidget
-let toggleButton
+let debugModeButton
+let simulationButton
 let detailWidget
+let debugModeEnabled = false
 let simulatedConnected = true
+let serviceOperationRevision = 0
 
 function isMonitorServiceRunning() {
   return getAllAppServices().some(
@@ -37,24 +42,60 @@ function setDetail(text) {
   }
 }
 
-function ensureMonitorService() {
-  if (isMonitorServiceRunning()) {
+function startMonitor({ debug, operationRevision }) {
+  const options = {
+    file: MONITOR_SERVICE_FILE,
+    reload: !debug,
+    complete_func: ({ result }) => {
+      logger.log(`${debug ? 'Debug' : 'Production'} start result: ${result}`)
+      if (operationRevision === serviceOperationRevision) {
+        setDetail(
+          result
+            ? debug
+              ? 'Debug monitor is running.'
+              : 'Real Bluetooth monitor restored.'
+            : 'Could not start the connection monitor',
+        )
+      }
+    },
+  }
+
+  if (debug) {
+    options.param = 'mode=debug'
+  }
+
+  const errorCode = startAppService(options)
+  logger.log(`Monitor start request code: ${errorCode}`)
+}
+
+function replaceMonitor({ start, debug = false }) {
+  const operationRevision = ++serviceOperationRevision
+
+  const finish = () => {
+    if (operationRevision !== serviceOperationRevision) {
+      return
+    }
+    if (start) {
+      startMonitor({ debug, operationRevision })
+    }
+  }
+
+  if (!isMonitorServiceRunning()) {
+    finish()
     return
   }
 
-  const errorCode = startAppService({
+  stopAppService({
     file: MONITOR_SERVICE_FILE,
-    reload: getMonitoringEnabled(),
     complete_func: ({ result }) => {
-      logger.log(`Debug monitor start result: ${result}`)
-      setDetail(
-        result
-          ? 'Debug input is ready.'
-          : 'Could not start the connection monitor',
-      )
+      logger.log(`Monitor stop result: ${result}`)
+      if (!result && operationRevision === serviceOperationRevision) {
+        setDetail('Could not stop the current connection monitor')
+        return
+      }
+      finish()
     },
   })
-  logger.log(`Debug monitor start request code: ${errorCode}`)
 }
 
 function renderSimulationState() {
@@ -64,25 +105,81 @@ function renderSimulationState() {
 
   statusWidget.setProperty(
     prop.TEXT,
-    simulatedConnected ? 'SIMULATED: CONNECTED' : 'SIMULATED: DISCONNECTED',
+    debugModeEnabled
+      ? simulatedConnected
+        ? 'SIMULATED: CONNECTED'
+        : 'SIMULATED: DISCONNECTED'
+      : 'REAL BLUETOOTH ACTIVE',
   )
-  statusWidget.setProperty(prop.COLOR, simulatedConnected ? 0x58d68d : 0xff6b7a)
-  if (!toggleButton) {
+  statusWidget.setProperty(
+    prop.COLOR,
+    debugModeEnabled
+      ? simulatedConnected
+        ? 0x58d68d
+        : 0xff6b7a
+      : 0x8fd9ec,
+  )
+
+  if (!debugModeButton || !simulationButton) {
     return
   }
 
-  // BUTTON updates require its geometry along with the visual properties.
-  toggleButton.setProperty(prop.MORE, {
-    ...Styles.TOGGLE_BUTTON_STYLE,
-    radius: 66,
-    normal_color: simulatedConnected ? 0x21734d : 0xa63737,
-    press_color: simulatedConnected ? 0x4aa97a : 0xd86565,
+  debugModeButton.setProperty(prop.MORE, {
+    ...Styles.DEBUG_MODE_BUTTON_STYLE,
+    radius: 44,
+    normal_color: debugModeEnabled ? 0x21734d : 0xa63737,
+    press_color: debugModeEnabled ? 0x4aa97a : 0xd86565,
     color: 0xffffff,
-    text: simulatedConnected
-      ? 'SIMULATE\nDISCONNECT'
-      : 'SIMULATE\nRECONNECT',
-    text_size: 30,
+    text: debugModeEnabled ? 'DEBUG MODE ON' : 'DEBUG MODE OFF',
+    text_size: 28,
+    click_func: toggleDebugMode,
   })
+
+  // Keep click_func in every BUTTON update; prop.MORE replaces button options.
+  simulationButton.setProperty(prop.MORE, {
+    ...Styles.TOGGLE_BUTTON_STYLE,
+    radius: 52,
+    normal_color: !debugModeEnabled
+      ? 0x3c4650
+      : simulatedConnected
+        ? 0x21734d
+        : 0xa63737,
+    press_color: !debugModeEnabled
+      ? 0x596673
+      : simulatedConnected
+        ? 0x4aa97a
+        : 0xd86565,
+    color: 0xffffff,
+    text: !debugModeEnabled
+      ? 'ENABLE DEBUG MODE'
+      : simulatedConnected
+        ? 'SIMULATE DISCONNECT'
+        : 'SIMULATE RECONNECT',
+    text_size: 27,
+    click_func: toggleSimulation,
+  })
+}
+
+function toggleDebugMode() {
+  debugModeEnabled = !debugModeEnabled
+
+  if (debugModeEnabled) {
+    // Debug always starts from a clean connected baseline.
+    simulatedConnected = true
+    setDebugSimulatedConnected(true)
+    setDebugSimulationActive(true)
+    replaceMonitor({ start: false })
+    setDetail('Real Bluetooth detection is paused.')
+  } else {
+    simulatedConnected = true
+    setDebugSimulatedConnected(true)
+    setDebugSimulationActive(false)
+    replaceMonitor({ start: getMonitoringEnabled(), debug: false })
+    setDetail('Debug stopped. Real Bluetooth detection restored.')
+  }
+
+  renderSimulationState()
+  logger.log(`Debug mode changed to ${debugModeEnabled ? 'ON' : 'OFF'}`)
 }
 
 function simulateDisconnect() {
@@ -93,6 +190,7 @@ function simulateDisconnect() {
   simulatedConnected = false
   setDebugSimulatedConnected(false)
   renderSimulationState()
+  replaceMonitor({ start: true, debug: true })
   setDetail('Waiting for the configured alert delay...')
   logger.log('Debug input changed to DISCONNECTED')
 }
@@ -105,11 +203,17 @@ function simulateReconnect() {
   simulatedConnected = true
   setDebugSimulatedConnected(true)
   renderSimulationState()
+  replaceMonitor({ start: false })
   setDetail('Simulated connection restored.')
   logger.log('Debug input changed to CONNECTED')
 }
 
 function toggleSimulation() {
+  if (!debugModeEnabled) {
+    setDetail('Turn DEBUG MODE ON first.')
+    return
+  }
+
   if (simulatedConnected) {
     simulateDisconnect()
   } else {
@@ -124,10 +228,11 @@ Page({
       return
     }
 
-    // Preserve an active disconnect when the user leaves and reopens this page.
+    debugModeEnabled = getDebugSimulationActive()
     simulatedConnected = getDebugSimulatedConnected()
-    setDebugSimulationActive(true)
-    ensureMonitorService()
+    if (debugModeEnabled) {
+      replaceMonitor({ start: !simulatedConnected, debug: true })
+    }
   },
 
   build() {
@@ -148,6 +253,17 @@ Page({
       text_style: text_style.NONE,
     })
 
+    debugModeButton = createWidget(widget.BUTTON, {
+      ...Styles.DEBUG_MODE_BUTTON_STYLE,
+      radius: 44,
+      normal_color: 0xa63737,
+      press_color: 0xd86565,
+      color: 0xffffff,
+      text: 'DEBUG MODE OFF',
+      text_size: 28,
+      click_func: toggleDebugMode,
+    })
+
     statusWidget = createWidget(widget.TEXT, {
       ...Styles.STATUS_STYLE,
       color: 0x58d68d,
@@ -158,25 +274,25 @@ Page({
       text_style: text_style.NONE,
     })
 
-    toggleButton = createWidget(widget.BUTTON, {
+    simulationButton = createWidget(widget.BUTTON, {
       ...Styles.TOGGLE_BUTTON_STYLE,
-      radius: 66,
-      normal_color: 0x21734d,
-      press_color: 0x4aa97a,
+      radius: 52,
+      normal_color: 0x3c4650,
+      press_color: 0x596673,
       color: 0xffffff,
-      text: 'SIMULATE\nDISCONNECT',
-      text_size: 30,
+      text: 'ENABLE DEBUG MODE',
+      text_size: 27,
       click_func: toggleSimulation,
     })
 
     detailWidget = createWidget(widget.TEXT, {
       ...Styles.DETAIL_STYLE,
       color: 0xaec4dc,
-      text: 'Tap the button to supply a test connection value.',
+      text: 'Debug Mode must be ON before simulation.',
       text_size: 17,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
-      text_style: text_style.NONE,
+      text_style: text_style.WRAP,
     })
 
     createWidget(widget.TEXT, {
@@ -193,13 +309,10 @@ Page({
   },
 
   onDestroy() {
-    // A simulated disconnect must continue in background. After reconnecting,
-    // leaving Debug returns the monitor to the real Bluetooth input.
-    if (simulatedConnected) {
-      setDebugSimulationActive(false)
-    }
+    // Debug Mode is explicit and remains in its selected state until toggled.
     statusWidget = undefined
-    toggleButton = undefined
+    debugModeButton = undefined
+    simulationButton = undefined
     detailWidget = undefined
   },
 })
