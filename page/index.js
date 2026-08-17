@@ -5,7 +5,7 @@ import {
   disConnect,
   removeListener,
 } from '@zos/ble'
-import { queryPermission, requestPermission } from '@zos/app'
+import { getPackageInfo, queryPermission, requestPermission } from '@zos/app'
 import {
   getAllAppServices,
   start as startAppService,
@@ -61,6 +61,24 @@ function onScreen(style, screenIndex) {
     ...style,
     y: style.y + px(SCREEN_HEIGHT * screenIndex),
   }
+}
+
+function getInstalledAppVersion() {
+  try {
+    const packageInfo = getPackageInfo()
+    const version = packageInfo && packageInfo.version
+
+    if (version && typeof version.name === 'string') {
+      return version.name
+    }
+    if (typeof version === 'string') {
+      return version
+    }
+  } catch (error) {
+    logger.warn(`Could not read installed app version: ${String(error)}`)
+  }
+
+  return 'Unknown'
 }
 
 function isBackgroundMonitorRunning() {
@@ -367,6 +385,44 @@ function buildSettingScreen({
   onButtonReady(actionButton)
 }
 
+function buildAboutScreen() {
+  createWidget(widget.TEXT, {
+    ...onScreen(Styles.ABOUT_TITLE_STYLE, 5),
+    color: 0xaec4dc,
+    text: 'LINK LOST',
+    text_size: 32,
+    align_h: align.CENTER_H,
+    align_v: align.CENTER_V,
+    text_style: text_style.NONE,
+  })
+
+  // Use the packaged icon so this page always matches the installed app icon.
+  createWidget(widget.IMG, {
+    ...onScreen(Styles.ABOUT_ICON_STYLE, 5),
+    src: 'icon.png',
+  })
+
+  createWidget(widget.TEXT, {
+    ...onScreen(Styles.ABOUT_VERSION_STYLE, 5),
+    color: 0xffffff,
+    text: `Version ${getInstalledAppVersion()}`,
+    text_size: 25,
+    align_h: align.CENTER_H,
+    align_v: align.CENTER_V,
+    text_style: text_style.NONE,
+  })
+
+  createWidget(widget.TEXT, {
+    ...onScreen(Styles.ABOUT_HINT_STYLE, 5),
+    color: 0x8ea4ba,
+    text: 'Bluetooth connection monitor',
+    text_size: 17,
+    align_h: align.CENTER_H,
+    align_v: align.CENTER_V,
+    text_style: text_style.NONE,
+  })
+}
+
 Page({
   onInit() {
     connectionStateMachine = createConnectionStateMachine({
@@ -385,7 +441,7 @@ Page({
       mode: SCROLL_MODE_SWIPER,
       options: {
         height: SCREEN_HEIGHT,
-        count: 5,
+        count: 6,
         modeParams: {
           crown_enable: true,
           on_page: (pageIndex) => logger.log(`Settings screen: ${pageIndex}`),
@@ -495,6 +551,8 @@ Page({
       },
       onPress: toggleVibration,
     })
+
+    buildAboutScreen()
 
     renderDelaySetting()
     renderStopSetting()

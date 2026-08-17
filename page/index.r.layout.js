@@ -48,3 +48,31 @@ export const SETTING_HINT_STYLE = {
   w: px(396),
   h: px(28),
 }
+
+export const ABOUT_TITLE_STYLE = {
+  x: px(30),
+  y: px(54),
+  w: px(420),
+  h: px(44),
+}
+
+export const ABOUT_ICON_STYLE = {
+  x: px(116),
+  y: px(112),
+  w: px(248),
+  h: px(248),
+}
+
+export const ABOUT_VERSION_STYLE = {
+  x: px(30),
+  y: px(378),
+  w: px(420),
+  h: px(34),
+}
+
+export const ABOUT_HINT_STYLE = {
+  x: px(30),
+  y: px(420),
+  w: px(420),
+  h: px(28),
+}
