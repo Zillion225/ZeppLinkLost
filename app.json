@@ -1,7 +1,7 @@
 {
   "configVersion": "v3",
   "app": {
-    "appId": 22023,
+    "appId": 1123846,
     "appName": "Link Lost",
     "appType": "app",
     "version": {
@@ -9,8 +9,8 @@
       "name": "1.0.0"
     },
     "icon": "icon.png",
-    "vender": "zepp",
-    "description": "Alerts when the watch loses its phone connection"
+    "vender": "Worapon Tepapitak",
+    "description": "Alerts you when your watch loses connection to your phone."
   },
   "permissions": [
     "device:os.bg_service",
