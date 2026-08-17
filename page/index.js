@@ -11,11 +11,14 @@ import {
   start as startAppService,
   stop as stopAppService,
 } from '@zos/app-service'
+import { GESTURE_LEFT, offGesture, onGesture } from '@zos/interaction'
 import { SCROLL_MODE_SWIPER, setScrollMode } from '@zos/page'
+import { push } from '@zos/router'
 import { Vibrator, VIBRATOR_SCENE_NOTIFICATION } from '@zos/sensor'
 import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log, px } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
+import { DEBUG_PAGE_ENABLED } from '../utils/developer'
 import {
   formatAlarmStopTime,
   formatDisconnectDelay,
@@ -356,6 +359,18 @@ Page({
   },
 
   build() {
+    // Keep vertical swipes for settings, while a left swipe opens the simulator.
+    onGesture({
+      callback: (gesture) => {
+        if (!DEBUG_PAGE_ENABLED || gesture !== GESTURE_LEFT) {
+          return false
+        }
+
+        push({ url: 'page/debug' })
+        return true
+      },
+    })
+
     setScrollMode({
       mode: SCROLL_MODE_SWIPER,
       options: {
@@ -416,7 +431,9 @@ Page({
     createWidget(widget.TEXT, {
       ...Styles.SWIPE_HINT_STYLE,
       color: 0x8ea4ba,
-      text: 'Swipe for settings',
+      text: DEBUG_PAGE_ENABLED
+        ? 'Swipe up: settings  •  left: Debug'
+        : 'Swipe up for settings',
       text_size: 17,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
@@ -479,6 +496,7 @@ Page({
   },
 
   onDestroy() {
+    offGesture()
     removePageConnectionListener()
 
     if (!backgroundServiceRequested && !backgroundServiceOwnsAlerts) {
