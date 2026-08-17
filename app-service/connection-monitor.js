@@ -32,7 +32,7 @@ let debugInputTimerId = null
 let bleListenerRegistered = false
 
 function readCurrentConnection() {
-  return getDebugSimulationActive()
+  return DEBUG_PAGE_ENABLED && getDebugSimulationActive()
     ? getDebugSimulatedConnected()
     : connectStatus()
 }

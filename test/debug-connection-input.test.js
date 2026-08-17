@@ -94,3 +94,24 @@ test('simulated disconnect drives the production alert controller', () => {
   input.poll()
   assert.deepEqual(events.slice(-2), ['alarm-stop', 'restored'])
 })
+
+test('a new Debug page session preserves a stored disconnected input', () => {
+  const transitions = []
+  const input = createDebugConnectionInput({
+    controller: {
+      updateConnection(connected, source) {
+        transitions.push({ connected, source })
+      },
+    },
+    readActive: () => true,
+    readSimulatedConnected: () => false,
+    readActualConnected: () => true,
+  })
+
+  input.poll()
+
+  assert.deepEqual(transitions, [
+    { connected: true, source: 'debug-baseline' },
+    { connected: false, source: 'debug-input' },
+  ])
+})

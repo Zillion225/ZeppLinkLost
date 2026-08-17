@@ -2,11 +2,13 @@ import {
   getAllAppServices,
   start as startAppService,
 } from '@zos/app-service'
+import { SCROLL_MODE_FREE, setScrollMode } from '@zos/page'
 import { back } from '@zos/router'
 import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log } from '@zos/utils'
 import { DEBUG_PAGE_ENABLED } from '../utils/developer'
 import {
+  getDebugSimulatedConnected,
   getMonitoringEnabled,
   setDebugSimulatedConnected,
   setDebugSimulationActive,
@@ -17,8 +19,7 @@ const logger = log.getLogger('linklost-debug')
 const MONITOR_SERVICE_FILE = 'app-service/connection-monitor'
 
 let statusWidget
-let connectedButton
-let disconnectedButton
+let toggleButton
 let detailWidget
 let simulatedConnected = true
 
@@ -66,8 +67,22 @@ function renderSimulationState() {
     simulatedConnected ? 'SIMULATED: CONNECTED' : 'SIMULATED: DISCONNECTED',
   )
   statusWidget.setProperty(prop.COLOR, simulatedConnected ? 0x58d68d : 0xff6b7a)
-  connectedButton.setProperty(prop.VISIBLE, simulatedConnected)
-  disconnectedButton.setProperty(prop.VISIBLE, !simulatedConnected)
+  if (!toggleButton) {
+    return
+  }
+
+  // BUTTON updates require its geometry along with the visual properties.
+  toggleButton.setProperty(prop.MORE, {
+    ...Styles.TOGGLE_BUTTON_STYLE,
+    radius: 66,
+    normal_color: simulatedConnected ? 0x21734d : 0xa63737,
+    press_color: simulatedConnected ? 0x4aa97a : 0xd86565,
+    color: 0xffffff,
+    text: simulatedConnected
+      ? 'SIMULATE\nDISCONNECT'
+      : 'SIMULATE\nRECONNECT',
+    text_size: 30,
+  })
 }
 
 function simulateDisconnect() {
@@ -94,6 +109,14 @@ function simulateReconnect() {
   logger.log('Debug input changed to CONNECTED')
 }
 
+function toggleSimulation() {
+  if (simulatedConnected) {
+    simulateDisconnect()
+  } else {
+    simulateReconnect()
+  }
+}
+
 Page({
   onInit() {
     if (!DEBUG_PAGE_ENABLED) {
@@ -101,9 +124,8 @@ Page({
       return
     }
 
-    // The running App Service polls these developer-only input values.
-    simulatedConnected = true
-    setDebugSimulatedConnected(true)
+    // Preserve an active disconnect when the user leaves and reopens this page.
+    simulatedConnected = getDebugSimulatedConnected()
     setDebugSimulationActive(true)
     ensureMonitorService()
   },
@@ -112,6 +134,9 @@ Page({
     if (!DEBUG_PAGE_ENABLED) {
       return
     }
+
+    // A pushed page must replace the vertical swiper used by the main screen.
+    setScrollMode({ mode: SCROLL_MODE_FREE })
 
     createWidget(widget.TEXT, {
       ...Styles.TITLE_STYLE,
@@ -133,7 +158,7 @@ Page({
       text_style: text_style.NONE,
     })
 
-    connectedButton = createWidget(widget.BUTTON, {
+    toggleButton = createWidget(widget.BUTTON, {
       ...Styles.TOGGLE_BUTTON_STYLE,
       radius: 66,
       normal_color: 0x21734d,
@@ -141,19 +166,7 @@ Page({
       color: 0xffffff,
       text: 'SIMULATE\nDISCONNECT',
       text_size: 30,
-      click_func: simulateDisconnect,
-    })
-
-    disconnectedButton = createWidget(widget.BUTTON, {
-      ...Styles.TOGGLE_BUTTON_STYLE,
-      radius: 66,
-      normal_color: 0xa63737,
-      press_color: 0xd86565,
-      color: 0xffffff,
-      text: 'SIMULATE\nRECONNECT',
-      text_size: 30,
-      visible: false,
-      click_func: simulateReconnect,
+      click_func: toggleSimulation,
     })
 
     detailWidget = createWidget(widget.TEXT, {
@@ -180,11 +193,13 @@ Page({
   },
 
   onDestroy() {
-    // Returning to the app restores the actual Bluetooth input automatically.
-    setDebugSimulationActive(false)
+    // A simulated disconnect must continue in background. After reconnecting,
+    // leaving Debug returns the monitor to the real Bluetooth input.
+    if (simulatedConnected) {
+      setDebugSimulationActive(false)
+    }
     statusWidget = undefined
-    connectedButton = undefined
-    disconnectedButton = undefined
+    toggleButton = undefined
     detailWidget = undefined
   },
 })
