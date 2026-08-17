@@ -10,7 +10,6 @@ import { create as createMediaPlayer, id as mediaId } from '@zos/media'
 import {
   SystemSounds,
   Vibrator,
-  VIBRATOR_SCENE_DURATION_LONG,
 } from '@zos/sensor'
 import { createSysTimer, stopTimer } from '@zos/timer'
 import { log } from '@zos/utils'
@@ -30,12 +29,14 @@ const alarmPlayer = createMediaPlayer(mediaId.PLAYER)
 let connectionStateMachine
 let currentConnectionState = null
 let pendingDisconnectTimerId = null
+let alarmStartTimerId = null
 let alarmStopTimerId = null
-let vibrationPulseTimerId = null
 let alarmIsPlaying = false
 let alarmIsVibrating = false
 let disconnectNotificationSent = false
 let connectionStateRevision = 0
+
+const NOTIFICATION_SETTLE_DELAY_MS = 1300
 
 alarmPlayer.addEventListener(alarmPlayer.event.PREPARE, (ready) => {
   if (!ready) {
@@ -50,39 +51,34 @@ alarmPlayer.addEventListener(alarmPlayer.event.PREPARE, (ready) => {
   }
 })
 
-const VIBRATION_PULSE_INTERVAL_MS = 1100
-
 function stopAlarmVibration() {
-  if (vibrationPulseTimerId !== null) {
-    stopTimer(vibrationPulseTimerId)
-    vibrationPulseTimerId = null
-  }
-
   if (alarmIsVibrating) {
     vibrator.stop()
   }
   alarmIsVibrating = false
 }
 
-function startAlarmVibration() {
-  alarmIsVibrating = true
-  vibrator.setMode({ mode: VIBRATOR_SCENE_DURATION_LONG })
-  vibrator.start()
+function startAlarmVibration(durationMs) {
+  const vibrationType = vibrator.getType()
 
-  // Repeat long pulses because some watch firmware ends the TIMER scene early.
-  vibrationPulseTimerId = createSysTimer(
-    true,
-    VIBRATION_PULSE_INTERVAL_MS,
-    () => {
-      if (alarmIsVibrating) {
-        vibrator.setMode({ mode: VIBRATOR_SCENE_DURATION_LONG })
-        vibrator.start()
-      }
+  alarmIsVibrating = true
+
+  // Let the motor subsystem own the full duration; JS timers only stop it early.
+  vibrator.start([
+    {
+      type: vibrationType.CONTINUOUS,
+      duration: durationMs,
     },
-  )
+  ])
+  logger.log(`Started continuous Link Lost vibration for ${durationMs}ms`)
 }
 
 function stopDisconnectAlarm(reason) {
+  if (alarmStartTimerId !== null) {
+    stopTimer(alarmStartTimerId)
+    alarmStartTimerId = null
+  }
+
   if (alarmStopTimerId !== null) {
     stopTimer(alarmStopTimerId)
     alarmStopTimerId = null
@@ -107,7 +103,7 @@ function playDisconnectAlarm() {
 
   alarmIsPlaying = true
   if (getVibrationEnabled()) {
-    startAlarmVibration()
+    startAlarmVibration(alarmStopTimeMs)
   } else {
     logger.log('Link Lost vibration is disabled by the user')
   }
@@ -131,6 +127,26 @@ function playDisconnectAlarm() {
   logger.log(
     `Started Link Lost ${selectedSound.label} alarm for ${alarmStopTimeMs}ms`,
   )
+}
+
+function scheduleDisconnectAlarmPlayback() {
+  if (alarmStartTimerId !== null) {
+    stopTimer(alarmStartTimerId)
+  }
+
+  // Wait for the system notification's short vibration to release the motor.
+  const timerId = createSysTimer(false, NOTIFICATION_SETTLE_DELAY_MS, () => {
+    if (alarmStartTimerId !== timerId) {
+      return
+    }
+    alarmStartTimerId = null
+
+    if (currentConnectionState === false && disconnectNotificationSent) {
+      playDisconnectAlarm()
+    }
+  })
+
+  alarmStartTimerId = timerId
 }
 
 function playReconnectSound() {
@@ -174,7 +190,7 @@ function sendDisconnectNotification() {
   )
 
   if (notificationId) {
-    playDisconnectAlarm()
+    scheduleDisconnectAlarmPlayback()
   }
 }
 
