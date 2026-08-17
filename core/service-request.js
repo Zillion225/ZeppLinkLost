@@ -2,3 +2,8 @@
 export function isServiceRequestAccepted(result) {
   return Number(result) === 0
 }
+
+/** The asynchronous App Service callback reports success as a Boolean. */
+export function isServiceStartSuccessful(result) {
+  return result === true
+}

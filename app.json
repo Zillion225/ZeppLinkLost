@@ -5,8 +5,8 @@
     "appName": "Link Lost",
     "appType": "app",
     "version": {
-      "code": 5,
-      "name": "1.0.4"
+      "code": 6,
+      "name": "1.0.5"
     },
     "icon": "icon.png",
     "vender": "zepp",

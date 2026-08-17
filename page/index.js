@@ -15,7 +15,10 @@ import { SCROLL_MODE_SWIPER, setScrollMode } from '@zos/page'
 import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log, px } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
-import { isServiceRequestAccepted } from '../core/service-request'
+import {
+  isServiceRequestAccepted,
+  isServiceStartSuccessful,
+} from '../core/service-request'
 import {
   formatAlarmStopTime,
   formatDisconnectDelay,
@@ -179,6 +182,9 @@ function startBackgroundMonitor() {
 
   if (isBackgroundMonitorRunning()) {
     backgroundServiceOwnsAlerts = true
+    // A previous failed start may have enabled the foreground status listener.
+    // Remove it now so the running App Service is the single BLE monitor.
+    removePageConnectionListener()
     logger.log('Background connection monitor is already running')
     return
   }
@@ -189,16 +195,20 @@ function startBackgroundMonitor() {
     reload: true,
     complete_func: ({ result }) => {
       backgroundServiceRequested = false
+      const didStart = isServiceStartSuccessful(result)
 
       if (!monitorEnabled) {
-        if (result) {
+        if (didStart) {
           stopBackgroundMonitor()
         }
         return
       }
 
-      backgroundServiceOwnsAlerts = result
-      if (result) {
+      backgroundServiceOwnsAlerts = didStart
+      if (didStart) {
+        // Do not leave a fallback BLE connection alongside the App Service:
+        // it can race the service and make a restored connection look lost.
+        removePageConnectionListener()
         logger.log('Background connection monitor started')
         return
       }
