@@ -90,11 +90,21 @@ function createVibrationAdapter() {
 
 function createNotifier({ debug, serviceFile, logger }) {
   const systemSounds = new SystemSounds()
-  const title = debug ? 'Link Lost (Debug)' : 'Link Lost'
-  const prefix = debug ? 'LK: Simulated phone connection' : 'LK: Phone connection'
+  let lastDisconnectWasDebug = false
+
+  function getNotificationText(debugActive) {
+    return debugActive
+      ? {
+          title: 'Link Lost (Debug)',
+          prefix: 'LK: Simulated phone connection',
+        }
+      : { title: 'Link Lost', prefix: 'LK: Phone connection' }
+  }
 
   return {
     disconnected() {
+      lastDisconnectWasDebug = typeof debug === 'function' ? debug() : debug
+      const { title, prefix } = getNotificationText(lastDisconnectWasDebug)
       const notificationId = notify({
         title,
         content: `${prefix} lost`,
@@ -111,6 +121,7 @@ function createNotifier({ debug, serviceFile, logger }) {
     },
 
     restored() {
+      const { title, prefix } = getNotificationText(lastDisconnectWasDebug)
       const notificationId = notify({
         title,
         content: `${prefix} restored`,

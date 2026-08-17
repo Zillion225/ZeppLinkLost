@@ -1,16 +1,15 @@
 import {
   getAllAppServices,
   start as startAppService,
-  stop as stopAppService,
 } from '@zos/app-service'
 import { back } from '@zos/router'
 import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log } from '@zos/utils'
 import { DEBUG_PAGE_ENABLED } from '../utils/developer'
 import {
-  getDebugSimulatedConnected,
   getMonitoringEnabled,
   setDebugSimulatedConnected,
+  setDebugSimulationActive,
 } from '../utils/settings'
 import * as Styles from 'zosLoader:./debug.[pf].layout.js'
 
@@ -22,7 +21,6 @@ let connectedButton
 let disconnectedButton
 let detailWidget
 let simulatedConnected = true
-let transitionInProgress = false
 
 function isMonitorServiceRunning() {
   return getAllAppServices().some(
@@ -36,6 +34,26 @@ function setDetail(text) {
   if (detailWidget) {
     detailWidget.setProperty(prop.TEXT, text)
   }
+}
+
+function ensureMonitorService() {
+  if (isMonitorServiceRunning()) {
+    return
+  }
+
+  const errorCode = startAppService({
+    file: MONITOR_SERVICE_FILE,
+    reload: getMonitoringEnabled(),
+    complete_func: ({ result }) => {
+      logger.log(`Debug monitor start result: ${result}`)
+      setDetail(
+        result
+          ? 'Debug input is ready.'
+          : 'Could not start the connection monitor',
+      )
+    },
+  })
+  logger.log(`Debug monitor start request code: ${errorCode}`)
 }
 
 function renderSimulationState() {
@@ -52,122 +70,28 @@ function renderSimulationState() {
   disconnectedButton.setProperty(prop.VISIBLE, !simulatedConnected)
 }
 
-function stopMonitor(onStopped) {
-  if (!isMonitorServiceRunning()) {
-    onStopped(true)
-    return
-  }
-
-  stopAppService({
-    file: MONITOR_SERVICE_FILE,
-    complete_func: ({ result }) => {
-      logger.log(`Monitor stop result: ${result}`)
-      onStopped(result)
-    },
-  })
-}
-
-function startMonitor({ debug, onStarted }) {
-  const options = {
-    file: MONITOR_SERVICE_FILE,
-    reload: !debug,
-    complete_func: ({ result }) => {
-      logger.log(`${debug ? 'Debug' : 'Production'} monitor start result: ${result}`)
-      onStarted(result)
-    },
-  }
-
-  if (debug) {
-    options.param = 'mode=debug'
-  }
-
-  const errorCode = startAppService(options)
-  logger.log(`Monitor start request code: ${errorCode}`)
-}
-
-function switchToDebugMonitor() {
-  transitionInProgress = true
-  setDetail('Starting simulated disconnect...')
-
-  // Only one continuous service is used; Debug supplies a different input value.
-  stopMonitor((stopped) => {
-    if (!stopped) {
-      transitionInProgress = false
-      setDetail('Could not stop the production monitor')
-      return
-    }
-
-    startMonitor({
-      debug: true,
-      onStarted: (started) => {
-        transitionInProgress = false
-        if (started) {
-          setDetail('Production alert flow is running with test input.')
-          return
-        }
-
-        simulatedConnected = true
-        setDebugSimulatedConnected(true)
-        renderSimulationState()
-        setDetail('Could not start the Debug monitor')
-      },
-    })
-  })
-}
-
-function restoreProductionMonitor() {
-  transitionInProgress = true
-  setDetail('Restoring the real Bluetooth monitor...')
-
-  stopMonitor((stopped) => {
-    if (!stopped) {
-      transitionInProgress = false
-      setDetail('Could not stop the Debug monitor')
-      return
-    }
-
-    if (!getMonitoringEnabled()) {
-      transitionInProgress = false
-      setDetail('Simulation stopped. Real monitoring is disabled.')
-      return
-    }
-
-    startMonitor({
-      debug: false,
-      onStarted: (started) => {
-        transitionInProgress = false
-        setDetail(
-          started
-            ? 'Simulation stopped. Real monitoring restored.'
-            : 'Could not restore the real monitor',
-        )
-      },
-    })
-  })
-}
-
 function simulateDisconnect() {
-  if (!simulatedConnected || transitionInProgress) {
+  if (!simulatedConnected) {
     return
   }
 
   simulatedConnected = false
   setDebugSimulatedConnected(false)
   renderSimulationState()
-  switchToDebugMonitor()
+  setDetail('Waiting for the configured alert delay...')
+  logger.log('Debug input changed to DISCONNECTED')
 }
 
 function simulateReconnect() {
-  if (simulatedConnected || transitionInProgress) {
+  if (simulatedConnected) {
     return
   }
 
-  // The running controller sees this input during shutdown and performs its
-  // normal reconnect cancellation/restoration flow before production restarts.
   simulatedConnected = true
   setDebugSimulatedConnected(true)
   renderSimulationState()
-  restoreProductionMonitor()
+  setDetail('Simulated connection restored.')
+  logger.log('Debug input changed to CONNECTED')
 }
 
 Page({
@@ -177,7 +101,11 @@ Page({
       return
     }
 
-    simulatedConnected = getDebugSimulatedConnected()
+    // The running App Service polls these developer-only input values.
+    simulatedConnected = true
+    setDebugSimulatedConnected(true)
+    setDebugSimulationActive(true)
+    ensureMonitorService()
   },
 
   build() {
@@ -231,7 +159,7 @@ Page({
     detailWidget = createWidget(widget.TEXT, {
       ...Styles.DETAIL_STYLE,
       color: 0xaec4dc,
-      text: 'No real Bluetooth connection is changed.',
+      text: 'Tap the button to supply a test connection value.',
       text_size: 17,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
@@ -252,6 +180,8 @@ Page({
   },
 
   onDestroy() {
+    // Returning to the app restores the actual Bluetooth input automatically.
+    setDebugSimulationActive(false)
     statusWidget = undefined
     connectedButton = undefined
     disconnectedButton = undefined
