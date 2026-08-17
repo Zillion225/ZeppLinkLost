@@ -7,3 +7,8 @@ export function isServiceRequestAccepted(result) {
 export function isServiceStartSuccessful(result) {
   return result === true
 }
+
+/** Zepp permission APIs use 2 for an already-granted permission. */
+export function isPermissionGranted(result) {
+  return Number(result) === 2
+}

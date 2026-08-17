@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  isPermissionGranted,
   isServiceRequestAccepted,
   isServiceStartSuccessful,
 } from '../core/service-request.js'
@@ -18,4 +19,11 @@ test('Zepp App Service start callback uses a Boolean result', () => {
   assert.equal(isServiceStartSuccessful(false), false)
   assert.equal(isServiceStartSuccessful(0), false)
   assert.equal(isServiceStartSuccessful(1), false)
+})
+
+test('Zepp permission APIs use result code two for granted access', () => {
+  assert.equal(isPermissionGranted(2), true)
+  assert.equal(isPermissionGranted('2'), true)
+  assert.equal(isPermissionGranted(0), false)
+  assert.equal(isPermissionGranted(1), false)
 })

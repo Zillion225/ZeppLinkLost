@@ -16,6 +16,7 @@ import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log, px } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
 import {
+  isPermissionGranted,
   isServiceRequestAccepted,
   isServiceStartSuccessful,
 } from '../core/service-request'
@@ -252,15 +253,15 @@ function enableBackgroundMonitor() {
     permissions: [BACKGROUND_PERMISSION],
   })
 
-  if (permissionStates[0] === 2) {
+  if (isPermissionGranted(permissionStates[0])) {
     startBackgroundMonitor()
     return
   }
 
-  requestPermission({
+  const permissionRequestResult = requestPermission({
     permissions: [BACKGROUND_PERMISSION],
     callback: (result) => {
-      if (result[0] === 2) {
+      if (isPermissionGranted(result[0])) {
         startBackgroundMonitor()
         return
       }
@@ -269,6 +270,13 @@ function enableBackgroundMonitor() {
       registerPageConnectionListener()
     },
   })
+
+  // Zepp may grant this request synchronously and omit the callback. This is
+  // common immediately after installing an app, so start monitoring here too.
+  if (isPermissionGranted(permissionRequestResult)) {
+    logger.log('Background-monitor permission already granted')
+    startBackgroundMonitor()
+  }
 }
 
 function toggleMonitor() {
