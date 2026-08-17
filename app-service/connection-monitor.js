@@ -5,14 +5,16 @@ import {
   disConnect,
   removeListener,
 } from '@zos/ble'
+import { create as createMediaPlayer, id as mediaId } from '@zos/media'
+import { notify } from '@zos/notification'
+import { SystemSounds, Vibrator } from '@zos/sensor'
+import { createSysTimer, stopTimer } from '@zos/timer'
 import { log } from '@zos/utils'
+import { createAlarmController } from '../core/alarm-controller'
 import { createConnectionAlertController } from '../core/connection-alert-controller'
-import { parseServiceMode, SERVICE_MODE_DEBUG } from '../core/service-mode'
-import { createZeppAlertRuntime } from '../platform/zepp-alert-runtime'
 import {
   getAlarmSound,
   getAlarmStopTimeMs,
-  getDebugSimulatedConnected,
   getDisconnectDelayMs,
   getVibrationEnabled,
 } from '../utils/settings'
@@ -20,29 +22,159 @@ import {
 const logger = log.getLogger('linklost-service')
 const SERVICE_FILE = 'app-service/connection-monitor'
 
+// One App Service owns exactly one instance of every hardware resource.
+const systemSounds = new SystemSounds()
+const vibrator = new Vibrator()
+const alarmPlayer = createMediaPlayer(mediaId.PLAYER)
+
+const scheduler = {
+  setTimeout(callback, delayMs) {
+    return createSysTimer(false, delayMs, callback)
+  },
+  clearTimeout(timerId) {
+    stopTimer(timerId)
+  },
+}
+
 let controller
-let debugMode = false
 let bleListenerRegistered = false
+let vibrationRunning = false
+let mediaPlaying = false
+let pendingAudioStarted = null
+let pendingAudioFailed = null
+
+alarmPlayer.addEventListener(alarmPlayer.event.PREPARE, (ready) => {
+  const onStarted = pendingAudioStarted
+  const onFailed = pendingAudioFailed
+  pendingAudioStarted = null
+  pendingAudioFailed = null
+
+  // A reconnect may cancel the alarm while the media file is preparing.
+  if (!onStarted && !onFailed) {
+    return
+  }
+
+  if (!ready) {
+    logger.warn('Custom alarm audio could not be prepared')
+    if (onFailed) {
+      onFailed()
+    }
+    return
+  }
+
+  try {
+    alarmPlayer.start()
+    mediaPlaying = true
+    if (onStarted) {
+      onStarted()
+    }
+  } catch (error) {
+    logger.warn(`Custom alarm audio could not start: ${String(error)}`)
+    if (onFailed) {
+      onFailed()
+    }
+  }
+})
+
+const audio = {
+  start(sound, onStarted, onFailed) {
+    pendingAudioStarted = onStarted
+    pendingAudioFailed = onFailed
+    try {
+      alarmPlayer.setSource(alarmPlayer.source.FILE, { file: sound.file })
+      alarmPlayer.prepare()
+    } catch (error) {
+      pendingAudioStarted = null
+      pendingAudioFailed = null
+      logger.warn(`Custom alarm audio setup failed: ${String(error)}`)
+      if (onFailed) {
+        onFailed()
+      }
+    }
+  },
+  stop() {
+    pendingAudioStarted = null
+    pendingAudioFailed = null
+    if (mediaPlaying) {
+      alarmPlayer.stop()
+    }
+    mediaPlaying = false
+  },
+}
+
+const vibration = {
+  start(durationMs) {
+    if (vibrationRunning) {
+      vibrator.stop()
+    }
+
+    // CONTINUOUS lets the motor own the requested duration instead of relying
+    // on a short notification scene that firmware may end after one pulse.
+    const vibrationType = vibrator.getType()
+    vibrator.start([
+      {
+        type: vibrationType.CONTINUOUS,
+        duration: durationMs,
+      },
+    ])
+    vibrationRunning = true
+    logger.log(`Continuous alarm vibration started for ${durationMs}ms`)
+  },
+  stop() {
+    if (vibrationRunning) {
+      vibrator.stop()
+      logger.log('Continuous alarm vibration stopped')
+    }
+    vibrationRunning = false
+  },
+}
+
+const alarm = createAlarmController({ scheduler, audio, vibration, logger })
+
+const notifier = {
+  disconnected() {
+    const notificationId = notify({
+      title: 'Link Lost',
+      content: 'LK: Phone connection lost',
+      actions: [
+        {
+          text: 'Stop alarm',
+          file: SERVICE_FILE,
+          param: 'action=stop-alarm',
+        },
+      ],
+    })
+    logger.log(`Disconnect notification result: ${notificationId}`)
+    return Boolean(notificationId)
+  },
+
+  restored() {
+    const notificationId = notify({
+      title: 'Link Lost',
+      content: 'LK: Phone connection restored',
+      actions: [],
+    })
+    if (notificationId && systemSounds.getEnabled()) {
+      systemSounds.start(systemSounds.getSourceType().ACHIEVE)
+    }
+    logger.log(`Reconnect notification result: ${notificationId}`)
+    return Boolean(notificationId)
+  },
+}
 
 function readConnection() {
-  return debugMode ? getDebugSimulatedConnected() : connectStatus()
+  return connectStatus()
 }
 
 function handleConnectionChange(status) {
-  if (!debugMode && controller && typeof status === 'boolean') {
+  if (controller && typeof status === 'boolean') {
     controller.updateConnection(status, 'ble-listener')
   }
 }
 
 function createController() {
-  const runtime = createZeppAlertRuntime({
-    debug: debugMode,
-    serviceFile: SERVICE_FILE,
-    logger,
-  })
-
   controller = createConnectionAlertController({
-    ...runtime,
+    scheduler,
     settings: {
       getAlarmSound,
       getAlarmStopTimeMs,
@@ -50,6 +182,8 @@ function createController() {
       getVibrationEnabled,
     },
     connection: { isConnected: readConnection },
+    notifier,
+    alarm,
     onStateChange: ({ connected, isInitialState, source }) => {
       logger.log(
         `${source}: ${connected ? 'CONNECTED' : 'DISCONNECTED'}${
@@ -61,36 +195,18 @@ function createController() {
   })
 }
 
-function startProductionMonitor() {
-  createConnect((index, data, size) => {
-    logger.debug(`Received companion data: index=${index}, size=${size}`)
-  })
-  controller.initialize(connectStatus())
-  addListener(handleConnectionChange)
-  bleListenerRegistered = true
-  logger.log('Production BLE listener registered')
-}
-
-function startDebugMonitor() {
-  // Supplying true then false creates the same transition used by real BLE.
-  controller.initialize(true)
-  if (!getDebugSimulatedConnected()) {
-    controller.updateConnection(false, 'debug-input')
-  }
-  logger.log('Debug connection input initialized')
-}
-
 AppService({
-  onInit(params) {
-    debugMode = parseServiceMode(params) === SERVICE_MODE_DEBUG
-    logger.log(`Connection monitor starting: ${debugMode ? 'DEBUG' : 'PRODUCTION'}`)
+  onInit() {
+    logger.log('Singleton connection monitor starting')
     createController()
 
-    if (debugMode) {
-      startDebugMonitor()
-    } else {
-      startProductionMonitor()
-    }
+    createConnect((index, data, size) => {
+      logger.debug(`Received companion data: index=${index}, size=${size}`)
+    })
+    controller.initialize(connectStatus())
+    addListener(handleConnectionChange)
+    bleListenerRegistered = true
+    logger.log('Singleton connection monitor ready')
   },
 
   onEvent(event) {
@@ -104,11 +220,6 @@ AppService({
   },
 
   onDestroy() {
-    // The Debug page stores CONNECTED before stopping this service.
-    if (debugMode && controller && getDebugSimulatedConnected()) {
-      controller.updateConnection(true, 'debug-input')
-    }
-
     if (controller) {
       controller.destroy()
       controller = undefined
@@ -118,6 +229,6 @@ AppService({
       disConnect()
       bleListenerRegistered = false
     }
-    logger.log('Connection monitor stopped')
+    logger.log('Singleton connection monitor stopped')
   },
 })

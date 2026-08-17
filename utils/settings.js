@@ -13,9 +13,6 @@ const ALARM_STOP_TIME_STORAGE_KEY = 'alarm-stop-time-ms'
 const ALARM_SOUND_STORAGE_KEY = 'alarm-sound-id'
 const MONITOR_ENABLED_STORAGE_KEY = 'monitor-enabled'
 const VIBRATION_ENABLED_STORAGE_KEY = 'vibration-enabled'
-const DEBUG_SIMULATED_CONNECTED_STORAGE_KEY = 'debug-simulated-connected'
-// v2 intentionally resets the old implicit mode that could disable real BLE.
-const DEBUG_SIMULATION_ACTIVE_STORAGE_KEY = 'debug-mode-enabled-v2'
 const DEFAULT_DISCONNECT_DELAY_MS = DISCONNECT_DELAY_OPTIONS_MS[0]
 const DEFAULT_ALARM_STOP_TIME_MS = ALARM_STOP_TIME_OPTIONS_MS[1]
 const DEFAULT_ALARM_SOUND_ID = ALARM_SOUND_OPTIONS[0].id
@@ -138,27 +135,4 @@ export function getVibrationEnabled() {
 export function setVibrationEnabled(enabled) {
   localStorage.setItem(VIBRATION_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
   return enabled
-}
-
-export function getDebugSimulatedConnected() {
-  return (
-    localStorage.getItem(DEBUG_SIMULATED_CONNECTED_STORAGE_KEY, 'true') !== 'false'
-  )
-}
-
-export function setDebugSimulatedConnected(connected) {
-  localStorage.setItem(
-    DEBUG_SIMULATED_CONNECTED_STORAGE_KEY,
-    connected ? 'true' : 'false',
-  )
-  return connected
-}
-
-export function getDebugSimulationActive() {
-  return localStorage.getItem(DEBUG_SIMULATION_ACTIVE_STORAGE_KEY, 'false') === 'true'
-}
-
-export function setDebugSimulationActive(active) {
-  localStorage.setItem(DEBUG_SIMULATION_ACTIVE_STORAGE_KEY, active ? 'true' : 'false')
-  return active
 }

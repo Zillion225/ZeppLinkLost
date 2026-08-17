@@ -33,6 +33,19 @@ export function createConnectionAlertController({
   let disconnectNotificationSent = false
   let destroyed = false
 
+  function describeError(error) {
+    return error && error.message ? error.message : String(error)
+  }
+
+  function stopAlarmSafely(reason) {
+    try {
+      alarm.stop(reason)
+    } catch (error) {
+      // A hardware cleanup failure must never suppress the reconnect alert.
+      warn(`Alarm stop failed: ${describeError(error)}`)
+    }
+  }
+
   function clearTimer(timerId) {
     if (timerId !== null) {
       scheduler.clearTimeout(timerId)
@@ -73,11 +86,16 @@ export function createConnectionAlertController({
         return
       }
 
-      alarm.start({
-        sound: settings.getAlarmSound(),
-        durationMs: settings.getAlarmStopTimeMs(),
-        vibrationEnabled: settings.getVibrationEnabled(),
-      })
+      try {
+        alarm.start({
+          sound: settings.getAlarmSound(),
+          durationMs: settings.getAlarmStopTimeMs(),
+          vibrationEnabled: settings.getVibrationEnabled(),
+        })
+      } catch (error) {
+        // Keep the BLE listener alive even if a platform effect rejects a call.
+        warn(`Alarm start failed: ${describeError(error)}`)
+      }
     }, notificationSettleDelayMs)
   }
 
@@ -125,11 +143,15 @@ export function createConnectionAlertController({
       cancelPendingDisconnect()
       cancelAlarmStart()
       if (!isInitialState) {
-        alarm.stop('connection restored')
+        stopAlarmSafely('connection restored')
       }
 
       if (!isInitialState && previousConnected === false && disconnectNotificationSent) {
-        notifier.restored()
+        try {
+          notifier.restored()
+        } catch (error) {
+          warn(`Reconnect notification failed: ${describeError(error)}`)
+        }
         disconnectNotificationSent = false
       }
     } else if (previousConnected === true) {
@@ -148,7 +170,7 @@ export function createConnectionAlertController({
 
     stopAlarm(reason = 'user requested stop') {
       cancelAlarmStart()
-      alarm.stop(reason)
+      stopAlarmSafely(reason)
     },
 
     destroy() {
@@ -159,7 +181,7 @@ export function createConnectionAlertController({
       destroyed = true
       cancelPendingDisconnect()
       cancelAlarmStart()
-      alarm.stop('controller destroyed')
+      stopAlarmSafely('controller destroyed')
     },
 
     getState() {

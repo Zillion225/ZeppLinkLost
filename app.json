@@ -5,8 +5,8 @@
     "appName": "Link Lost",
     "appType": "app",
     "version": {
-      "code": 1,
-      "name": "1.0.0"
+      "code": 3,
+      "name": "1.0.2"
     },
     "icon": "icon.png",
     "vender": "zepp",
@@ -29,8 +29,7 @@
       "module": {
         "page": {
           "pages": [
-            "page/index",
-            "page/debug"
+            "page/index"
           ]
         },
         "app-side": {

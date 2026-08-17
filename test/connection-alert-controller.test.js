@@ -187,3 +187,84 @@ test('logger methods keep their required object context', () => {
 
   assert.equal(logger.messages.length > 0, true)
 })
+
+test('alarm start exception does not kill the reconnect workflow', () => {
+  const scheduler = createFakeScheduler()
+  const events = []
+  let externalConnected = true
+  const controller = createConnectionAlertController({
+    scheduler,
+    settings: {
+      getDisconnectDelayMs: () => 1000,
+      getAlarmStopTimeMs: () => 10000,
+      getAlarmSound: () => ({ file: 'alarm.mp3' }),
+      getVibrationEnabled: () => true,
+    },
+    connection: { isConnected: () => externalConnected },
+    notifier: {
+      disconnected() {
+        events.push('lost')
+        return true
+      },
+      restored() {
+        events.push('restored')
+        return true
+      },
+    },
+    alarm: {
+      start() {
+        throw new Error('hardware effect failed')
+      },
+      stop() {},
+    },
+    notificationSettleDelayMs: 200,
+  })
+
+  controller.initialize(true)
+  externalConnected = false
+  controller.updateConnection(false)
+  assert.doesNotThrow(() => scheduler.advanceBy(1200))
+
+  externalConnected = true
+  controller.updateConnection(true)
+  assert.deepEqual(events, ['lost', 'restored'])
+})
+
+test('alarm stop exception cannot suppress the restored notification', () => {
+  const scheduler = createFakeScheduler()
+  const events = []
+  let externalConnected = true
+  const controller = createConnectionAlertController({
+    scheduler,
+    settings: {
+      getDisconnectDelayMs: () => 1000,
+      getAlarmStopTimeMs: () => 10000,
+      getAlarmSound: () => ({ file: 'alarm.mp3' }),
+      getVibrationEnabled: () => true,
+    },
+    connection: { isConnected: () => externalConnected },
+    notifier: {
+      disconnected: () => true,
+      restored() {
+        events.push('restored')
+        return true
+      },
+    },
+    alarm: {
+      start() {},
+      stop() {
+        throw new Error('effect cleanup failed')
+      },
+    },
+    notificationSettleDelayMs: 200,
+  })
+
+  controller.initialize(true)
+  externalConnected = false
+  controller.updateConnection(false)
+  scheduler.advanceBy(1200)
+  externalConnected = true
+
+  assert.doesNotThrow(() => controller.updateConnection(true))
+  assert.deepEqual(events, ['restored'])
+})

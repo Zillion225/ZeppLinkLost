@@ -11,20 +11,16 @@ import {
   start as startAppService,
   stop as stopAppService,
 } from '@zos/app-service'
-import { GESTURE_LEFT, offGesture, onGesture } from '@zos/interaction'
 import { SCROLL_MODE_SWIPER, setScrollMode } from '@zos/page'
-import { push } from '@zos/router'
-import { Vibrator, VIBRATOR_SCENE_NOTIFICATION } from '@zos/sensor'
 import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log, px } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
-import { DEBUG_PAGE_ENABLED } from '../utils/developer'
+import { isServiceRequestAccepted } from '../core/service-request'
 import {
   formatAlarmStopTime,
   formatDisconnectDelay,
   getAlarmSound,
   getAlarmStopTimeMs,
-  getDebugSimulationActive,
   getDisconnectDelayMs,
   getMonitoringEnabled,
   getNextAlarmSoundId,
@@ -40,7 +36,6 @@ import {
 import * as Styles from 'zosLoader:./index.[pf].layout.js'
 
 const logger = log.getLogger('linklost')
-const vibrator = new Vibrator()
 const BACKGROUND_PERMISSION = 'device:os.bg_service'
 const BACKGROUND_SERVICE_FILE = 'app-service/connection-monitor'
 const SCREEN_HEIGHT = 480
@@ -112,8 +107,8 @@ function alertOnDisconnect() {
     return
   }
 
-  logger.warn('Connected to disconnected transition detected; vibrating once')
-  vibrator.start({ mode: VIBRATOR_SCENE_NOTIFICATION })
+  // The foreground listener is status-only; alarm effects have one owner.
+  logger.warn('Disconnect detected without a running background alert service')
 }
 
 function handleConnectionChange(status) {
@@ -138,7 +133,6 @@ function removePageConnectionListener() {
 function registerPageConnectionListener() {
   if (
     !monitorEnabled ||
-    getDebugSimulationActive() ||
     pageConnectionListenerRegistered ||
     backgroundServiceOwnsAlerts
   ) {
@@ -160,7 +154,7 @@ function stopBackgroundMonitor() {
     return
   }
 
-  stopAppService({
+  const stopResult = stopAppService({
     file: BACKGROUND_SERVICE_FILE,
     complete_func: ({ result }) => {
       backgroundServiceOwnsAlerts = false
@@ -172,15 +166,14 @@ function stopBackgroundMonitor() {
       }
     },
   })
+
+  if (!isServiceRequestAccepted(stopResult)) {
+    logger.warn(`Background monitor stop rejected: ${stopResult}`)
+  }
 }
 
 function startBackgroundMonitor() {
   if (!monitorEnabled || backgroundServiceRequested || backgroundServiceOwnsAlerts) {
-    return
-  }
-
-  if (getDebugSimulationActive()) {
-    logger.log('Real Bluetooth monitor paused while Debug Mode is ON')
     return
   }
 
@@ -216,6 +209,14 @@ function startBackgroundMonitor() {
   })
 
   logger.log(`Background connection monitor start requested: ${startResult}`)
+  if (!isServiceRequestAccepted(startResult)) {
+    // An immediate rejection may not invoke complete_func; release the latch so
+    // the page can retry instead of remaining permanently stuck.
+    backgroundServiceRequested = false
+    backgroundServiceOwnsAlerts = false
+    logger.warn(`Background monitor start rejected: ${startResult}`)
+    registerPageConnectionListener()
+  }
 }
 
 function enableBackgroundMonitor() {
@@ -370,18 +371,6 @@ Page({
   },
 
   build() {
-    // Keep vertical swipes for settings, while a left swipe opens the simulator.
-    onGesture({
-      callback: (gesture) => {
-        if (!DEBUG_PAGE_ENABLED || gesture !== GESTURE_LEFT) {
-          return false
-        }
-
-        push({ url: 'page/debug' })
-        return true
-      },
-    })
-
     setScrollMode({
       mode: SCROLL_MODE_SWIPER,
       options: {
@@ -442,9 +431,7 @@ Page({
     createWidget(widget.TEXT, {
       ...Styles.SWIPE_HINT_STYLE,
       color: 0x8ea4ba,
-      text: DEBUG_PAGE_ENABLED
-        ? 'Swipe up: settings  •  left: Debug'
-        : 'Swipe up for settings',
+      text: 'Swipe up for settings',
       text_size: 17,
       align_h: align.CENTER_H,
       align_v: align.CENTER_V,
@@ -507,7 +494,6 @@ Page({
   },
 
   onDestroy() {
-    offGesture()
     removePageConnectionListener()
 
     if (!backgroundServiceRequested && !backgroundServiceOwnsAlerts) {
