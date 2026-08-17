@@ -12,6 +12,7 @@ const DISCONNECT_DELAY_STORAGE_KEY = 'disconnect-delay-ms'
 const ALARM_STOP_TIME_STORAGE_KEY = 'alarm-stop-time-ms'
 const ALARM_SOUND_STORAGE_KEY = 'alarm-sound-id'
 const MONITOR_ENABLED_STORAGE_KEY = 'monitor-enabled'
+const VIBRATION_ENABLED_STORAGE_KEY = 'vibration-enabled'
 const DEFAULT_DISCONNECT_DELAY_MS = DISCONNECT_DELAY_OPTIONS_MS[0]
 const DEFAULT_ALARM_STOP_TIME_MS = ALARM_STOP_TIME_OPTIONS_MS[1]
 const DEFAULT_ALARM_SOUND_ID = ALARM_SOUND_OPTIONS[0].id
@@ -124,5 +125,14 @@ export function getMonitoringEnabled() {
 
 export function setMonitoringEnabled(enabled) {
   localStorage.setItem(MONITOR_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+  return enabled
+}
+
+export function getVibrationEnabled() {
+  return localStorage.getItem(VIBRATION_ENABLED_STORAGE_KEY, 'true') !== 'false'
+}
+
+export function setVibrationEnabled(enabled) {
+  localStorage.setItem(VIBRATION_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
   return enabled
 }

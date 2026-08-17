@@ -17,7 +17,6 @@ import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log, px } from '@zos/utils'
 import { createConnectionStateMachine } from '../utils/connection-state'
 import {
-  ALARM_SOUND_OPTIONS,
   formatAlarmStopTime,
   formatDisconnectDelay,
   getAlarmSound,
@@ -27,10 +26,12 @@ import {
   getNextAlarmSoundId,
   getNextAlarmStopTimeMs,
   getNextDisconnectDelayMs,
+  getVibrationEnabled,
   setAlarmSound,
   setAlarmStopTimeMs,
   setDisconnectDelayMs,
   setMonitoringEnabled,
+  setVibrationEnabled,
 } from '../utils/settings'
 import * as Styles from 'zosLoader:./index.[pf].layout.js'
 
@@ -41,14 +42,12 @@ const BACKGROUND_SERVICE_FILE = 'app-service/connection-monitor'
 const SCREEN_HEIGHT = 480
 
 let statusWidget
-let detailWidget
-let monitorButton
-let delayValueWidget
-let delayActionButton
-let stopValueWidget
-let stopActionButton
-let soundValueWidget
-let soundActionButton
+let monitorOnButton
+let monitorOffButton
+let delayButton
+let stopButton
+let soundButton
+let vibrationButton
 let connectionStateMachine
 let monitorEnabled = getMonitoringEnabled()
 let backgroundServiceOwnsAlerts = false
@@ -71,30 +70,25 @@ function isBackgroundMonitorRunning() {
 }
 
 function renderMonitorButton() {
-  if (!monitorButton) {
+  if (!monitorOnButton || !monitorOffButton) {
     return
   }
 
-  monitorButton.setProperty(
-    prop.TEXT,
-    monitorEnabled ? 'MONITOR: ON' : 'MONITOR: OFF',
-  )
+  monitorOnButton.setProperty(prop.VISIBLE, monitorEnabled)
+  monitorOffButton.setProperty(prop.VISIBLE, !monitorEnabled)
 }
 
 function renderConnectionStatus({ connected, isInitialState, source }) {
   const statusText = connected ? 'CONNECTED' : 'DISCONNECTED'
   const statusColor = connected ? 0x58d68d : 0xff6b7a
-  const detailText = monitorEnabled ? 'Monitor is active' : 'Monitor is turned off'
-
   logger.log(`${source}: ${statusText}${isInitialState ? ' (initial)' : ''}`)
 
-  if (!statusWidget || !detailWidget) {
+  if (!statusWidget) {
     return
   }
 
   statusWidget.setProperty(prop.TEXT, statusText)
   statusWidget.setProperty(prop.COLOR, statusColor)
-  detailWidget.setProperty(prop.TEXT, detailText)
 }
 
 function refreshConnectionStatus() {
@@ -252,10 +246,8 @@ function toggleMonitor() {
 
 function renderDelaySetting() {
   const currentDelay = getDisconnectDelayMs()
-  const nextDelay = getNextDisconnectDelayMs(currentDelay)
 
-  delayValueWidget.setProperty(prop.TEXT, formatDisconnectDelay(currentDelay))
-  delayActionButton.setProperty(prop.TEXT, `Next: ${formatDisconnectDelay(nextDelay)}`)
+  delayButton.setProperty(prop.TEXT, formatDisconnectDelay(currentDelay))
 }
 
 function cycleDelay() {
@@ -269,10 +261,8 @@ function cycleDelay() {
 
 function renderStopSetting() {
   const currentStopTime = getAlarmStopTimeMs()
-  const nextStopTime = getNextAlarmStopTimeMs(currentStopTime)
 
-  stopValueWidget.setProperty(prop.TEXT, formatAlarmStopTime(currentStopTime))
-  stopActionButton.setProperty(prop.TEXT, `Next: ${formatAlarmStopTime(nextStopTime)}`)
+  stopButton.setProperty(prop.TEXT, formatAlarmStopTime(currentStopTime))
 }
 
 function cycleStopTime() {
@@ -285,13 +275,8 @@ function cycleStopTime() {
 
 function renderSoundSetting() {
   const currentSound = getAlarmSound()
-  const nextSoundId = getNextAlarmSoundId(currentSound.id)
-  const nextSound =
-    ALARM_SOUND_OPTIONS.find((sound) => sound.id === nextSoundId) ||
-    ALARM_SOUND_OPTIONS[0]
 
-  soundValueWidget.setProperty(prop.TEXT, currentSound.label)
-  soundActionButton.setProperty(prop.TEXT, `Next: ${nextSound.label}`)
+  soundButton.setProperty(prop.TEXT, currentSound.label)
 }
 
 function cycleSound() {
@@ -302,14 +287,25 @@ function cycleSound() {
   logger.log(`Alarm sound changed to ${getAlarmSound().label}`)
 }
 
+function renderVibrationSetting() {
+  vibrationButton.setProperty(prop.TEXT, getVibrationEnabled() ? 'ON' : 'OFF')
+}
+
+function toggleVibration() {
+  const nextState = !getVibrationEnabled()
+
+  setVibrationEnabled(nextState)
+  renderVibrationSetting()
+  logger.log(`Alarm vibration changed to ${nextState ? 'ON' : 'OFF'}`)
+}
+
 function buildSettingScreen({
   screenIndex,
   title,
-  instruction,
   color,
   buttonColor,
   buttonPressColor,
-  onValueWidgetsReady,
+  onButtonReady,
   onPress,
 }) {
   createWidget(widget.TEXT, {
@@ -322,48 +318,28 @@ function buildSettingScreen({
     text_style: text_style.NONE,
   })
 
-  createWidget(widget.TEXT, {
-    ...onScreen(Styles.SETTING_INSTRUCTION_STYLE, screenIndex),
-    color: 0xc6d5e3,
-    text: instruction,
-    text_size: 19,
-    align_h: align.CENTER_H,
-    align_v: align.CENTER_V,
-    text_style: text_style.NONE,
-  })
-
-  const valueWidget = createWidget(widget.TEXT, {
-    ...onScreen(Styles.SETTING_VALUE_STYLE, screenIndex),
-    color,
-    text: '--',
-    text_size: title === 'ALARM SOUND' ? 52 : 58,
-    align_h: align.CENTER_H,
-    align_v: align.CENTER_V,
-    text_style: text_style.NONE,
-  })
-
   const actionButton = createWidget(widget.BUTTON, {
     ...onScreen(Styles.SETTING_BUTTON_STYLE, screenIndex),
-    radius: 16,
+    radius: 65,
     normal_color: buttonColor,
     press_color: buttonPressColor,
     color: 0xffffff,
-    text: 'Next',
-    text_size: 26,
+    text: '--',
+    text_size: title === 'ALARM SOUND' ? 52 : 58,
     click_func: onPress,
   })
 
   createWidget(widget.TEXT, {
     ...onScreen(Styles.SETTING_HINT_STYLE, screenIndex),
     color: 0x8ea4ba,
-    text: 'Tap button to change',
+    text: 'Tap the oval to choose next',
     text_size: 17,
     align_h: align.CENTER_H,
     align_v: align.CENTER_V,
     text_style: text_style.NONE,
   })
 
-  onValueWidgetsReady(valueWidget, actionButton)
+  onButtonReady(actionButton)
 }
 
 Page({
@@ -384,7 +360,7 @@ Page({
       mode: SCROLL_MODE_SWIPER,
       options: {
         height: SCREEN_HEIGHT,
-        count: 4,
+        count: 5,
         modeParams: {
           crown_enable: true,
           on_page: (pageIndex) => logger.log(`Settings screen: ${pageIndex}`),
@@ -412,34 +388,27 @@ Page({
       text_style: text_style.NONE,
     })
 
-    detailWidget = createWidget(widget.TEXT, {
-      ...Styles.MAIN_DETAIL_STYLE,
-      color: 0x8ea4ba,
-      text: 'Reading connection status',
-      text_size: 20,
-      align_h: align.CENTER_H,
-      align_v: align.CENTER_V,
-      text_style: text_style.WRAP,
-    })
-
-    createWidget(widget.TEXT, {
-      ...Styles.MONITOR_LABEL_STYLE,
-      color: 0xaec4dc,
-      text: 'CONNECTION MONITOR',
-      text_size: 20,
-      align_h: align.CENTER_H,
-      align_v: align.CENTER_V,
-      text_style: text_style.NONE,
-    })
-
-    monitorButton = createWidget(widget.BUTTON, {
+    monitorOnButton = createWidget(widget.BUTTON, {
       ...Styles.MONITOR_BUTTON_STYLE,
-      radius: 16,
+      radius: 63,
       normal_color: 0x21734d,
       press_color: 0x4aa97a,
       color: 0xffffff,
-      text: 'MONITOR',
-      text_size: 28,
+      text: 'MONITORING ON',
+      text_size: 30,
+      visible: monitorEnabled,
+      click_func: toggleMonitor,
+    })
+
+    monitorOffButton = createWidget(widget.BUTTON, {
+      ...Styles.MONITOR_BUTTON_STYLE,
+      radius: 63,
+      normal_color: 0xa63737,
+      press_color: 0xd86565,
+      color: 0xffffff,
+      text: 'NOT MONITORING',
+      text_size: 30,
+      visible: !monitorEnabled,
       click_func: toggleMonitor,
     })
     renderMonitorButton()
@@ -457,13 +426,11 @@ Page({
     buildSettingScreen({
       screenIndex: 1,
       title: 'ALERT DELAY',
-      instruction: 'Wait after disconnection',
       color: 0x59d98e,
       buttonColor: 0x1e5b8f,
       buttonPressColor: 0x4a8fc7,
-      onValueWidgetsReady: (value, button) => {
-        delayValueWidget = value
-        delayActionButton = button
+      onButtonReady: (button) => {
+        delayButton = button
       },
       onPress: cycleDelay,
     })
@@ -471,13 +438,11 @@ Page({
     buildSettingScreen({
       screenIndex: 2,
       title: 'ALARM AUTO-STOP',
-      instruction: 'Stop alarm after',
       color: 0xd0b3f5,
       buttonColor: 0x754a9e,
       buttonPressColor: 0x9c73c6,
-      onValueWidgetsReady: (value, button) => {
-        stopValueWidget = value
-        stopActionButton = button
+      onButtonReady: (button) => {
+        stopButton = button
       },
       onPress: cycleStopTime,
     })
@@ -485,20 +450,31 @@ Page({
     buildSettingScreen({
       screenIndex: 3,
       title: 'ALARM SOUND',
-      instruction: 'Choose alarm tone',
       color: 0xf0c1a9,
       buttonColor: 0xa25735,
       buttonPressColor: 0xd48762,
-      onValueWidgetsReady: (value, button) => {
-        soundValueWidget = value
-        soundActionButton = button
+      onButtonReady: (button) => {
+        soundButton = button
       },
       onPress: cycleSound,
+    })
+
+    buildSettingScreen({
+      screenIndex: 4,
+      title: 'ALARM VIBRATION',
+      color: 0x8fd9ec,
+      buttonColor: 0x25758d,
+      buttonPressColor: 0x53a9c4,
+      onButtonReady: (button) => {
+        vibrationButton = button
+      },
+      onPress: toggleVibration,
     })
 
     renderDelaySetting()
     renderStopSetting()
     renderSoundSetting()
+    renderVibrationSetting()
     refreshConnectionStatus()
   },
 
@@ -509,14 +485,12 @@ Page({
       disConnect()
     }
     statusWidget = undefined
-    detailWidget = undefined
-    monitorButton = undefined
-    delayValueWidget = undefined
-    delayActionButton = undefined
-    stopValueWidget = undefined
-    stopActionButton = undefined
-    soundValueWidget = undefined
-    soundActionButton = undefined
+    monitorOnButton = undefined
+    monitorOffButton = undefined
+    delayButton = undefined
+    stopButton = undefined
+    soundButton = undefined
+    vibrationButton = undefined
     connectionStateMachine = undefined
   },
 })
