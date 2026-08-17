@@ -7,7 +7,11 @@ import {
 } from '@zos/ble'
 import { create as createMediaPlayer, id as mediaId } from '@zos/media'
 import { notify } from '@zos/notification'
-import { SystemSounds, Vibrator } from '@zos/sensor'
+import {
+  SystemSounds,
+  Vibrator,
+  VIBRATOR_SCENE_TIMER,
+} from '@zos/sensor'
 import { createSysTimer, stopTimer } from '@zos/timer'
 import { log } from '@zos/utils'
 import { createAlarmController } from '../core/alarm-controller'
@@ -103,22 +107,18 @@ const audio = {
 }
 
 const vibration = {
-  start(durationMs) {
+  start() {
     if (vibrationRunning) {
       vibrator.stop()
     }
 
-    // CONTINUOUS lets the motor own the requested duration instead of relying
-    // on a short notification scene that firmware may end after one pulse.
-    const vibrationType = vibrator.getType()
-    vibrator.start([
-      {
-        type: vibrationType.CONTINUOUS,
-        duration: durationMs,
-      },
-    ])
+    // Follow Zepp's documented alarm-scene sequence. On Active Max, passing a
+    // mode to start() can be ignored by the background runtime; setting it first
+    // makes the next start() use TIMER until this adapter calls stop().
+    vibrator.setMode(VIBRATOR_SCENE_TIMER)
+    vibrator.start()
     vibrationRunning = true
-    logger.log(`Continuous alarm vibration started for ${durationMs}ms`)
+    logger.log('Timer alarm vibration started')
   },
   stop() {
     if (vibrationRunning) {
