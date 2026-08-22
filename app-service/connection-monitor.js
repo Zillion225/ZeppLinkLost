@@ -168,7 +168,10 @@ function readConnection() {
 
 function handleConnectionChange(status) {
   if (controller && typeof status === 'boolean') {
+    logger.log(`BLE listener status: ${status}`)
     controller.updateConnection(status, 'ble-listener')
+  } else {
+    logger.warn(`Ignored BLE listener status: ${String(status)}`)
   }
 }
 
@@ -203,9 +206,12 @@ AppService({
     createConnect((index, data, size) => {
       logger.debug(`Received companion data: index=${index}, size=${size}`)
     })
-    controller.initialize(connectStatus())
+    const initialConnection = connectStatus()
+    logger.log(`Initial BLE connection status: ${initialConnection}`)
+    controller.initialize(initialConnection)
     addListener(handleConnectionChange)
     bleListenerRegistered = true
+    logger.log('BLE connection listener registered')
     logger.log('Singleton connection monitor ready')
   },
 

@@ -53,6 +53,9 @@ export function createConnectionAlertController({
   }
 
   function cancelPendingDisconnect() {
+    if (pendingDisconnectTimerId !== null) {
+      log('Disconnect timer cancelled')
+    }
     clearTimer(pendingDisconnectTimerId)
     pendingDisconnectTimerId = null
   }
@@ -68,6 +71,7 @@ export function createConnectionAlertController({
     }
 
     const verifiedConnection = connection.isConnected()
+    log(`Connection verification: ${verifiedConnection}`)
     if (verifiedConnection !== false) {
       // Recover the state even if the platform missed a reconnect callback.
       if (typeof verifiedConnection === 'boolean') {
@@ -154,7 +158,9 @@ export function createConnectionAlertController({
         }
         disconnectNotificationSent = false
       }
-    } else if (previousConnected === true) {
+    } else if (previousConnected === true || isInitialState) {
+      // A fresh App Service can start after the phone has already disconnected.
+      // Treat that initial state like a normal loss, but still honour the delay.
       scheduleDisconnectAlert()
     }
 

@@ -74,6 +74,36 @@ test('sustained disconnect follows delay, notification, settle, then alarm', () 
   assert.equal(harness.events[1].options.vibrationEnabled, true)
 })
 
+test('initial disconnected state alerts only after the configured delay', () => {
+  const harness = createHarness()
+  harness.setExternalConnected(false)
+  harness.controller.initialize(false)
+
+  harness.scheduler.advanceBy(999)
+  assert.equal(harness.events.length, 0)
+
+  harness.scheduler.advanceBy(1)
+  assert.deepEqual(harness.events[0], { type: 'lost-notification', at: 1000 })
+
+  harness.scheduler.advanceBy(200)
+  assert.equal(harness.events[1].type, 'alarm-start')
+  assert.equal(harness.events[1].at, 1200)
+})
+
+test('initial disconnected state reconnecting before delay sends no alert', () => {
+  const harness = createHarness()
+  harness.setExternalConnected(false)
+  harness.controller.initialize(false)
+  harness.scheduler.advanceBy(500)
+
+  harness.setExternalConnected(true)
+  harness.controller.updateConnection(true)
+  harness.scheduler.advanceBy(1000)
+
+  assert.equal(harness.events.some((event) => event.type === 'lost-notification'), false)
+  assert.equal(harness.events.some((event) => event.type === 'alarm-start'), false)
+})
+
 test('reconnect before delay cancels the lost alert', () => {
   const harness = createHarness()
   harness.controller.initialize(true)

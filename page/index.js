@@ -1,10 +1,4 @@
-import {
-  addListener,
-  connectStatus,
-  createConnect,
-  disConnect,
-  removeListener,
-} from '@zos/ble'
+import { connectStatus } from '@zos/ble'
 import { getPackageInfo, queryPermission, requestPermission } from '@zos/app'
 import {
   getAllAppServices,
@@ -14,7 +8,7 @@ import {
 import { SCROLL_MODE_SWIPER, setScrollMode } from '@zos/page'
 import { align, createWidget, prop, text_style, widget } from '@zos/ui'
 import { log, px } from '@zos/utils'
-import { createConnectionStateMachine } from '../utils/connection-state'
+import { getMonitorStatus, MonitorStatus } from '../core/monitor-status'
 import {
   isPermissionGranted,
   isServiceRequestAccepted,
@@ -47,15 +41,16 @@ const SCREEN_HEIGHT = 480
 let statusWidget
 let monitorOnButton
 let monitorOffButton
+let monitorStartingButton
+let monitorUnavailableButton
 let delayButton
 let stopButton
 let soundButton
 let vibrationButton
-let connectionStateMachine
 let monitorEnabled = getMonitoringEnabled()
 let backgroundServiceOwnsAlerts = false
 let backgroundServiceRequested = false
-let pageConnectionListenerRegistered = false
+let permissionRequestPending = false
 
 function onScreen(style, screenIndex) {
   return {
@@ -91,12 +86,32 @@ function isBackgroundMonitorRunning() {
 }
 
 function renderMonitorButton() {
-  if (!monitorOnButton || !monitorOffButton) {
+  if (
+    !monitorOnButton ||
+    !monitorOffButton ||
+    !monitorStartingButton ||
+    !monitorUnavailableButton
+  ) {
     return
   }
 
-  monitorOnButton.setProperty(prop.VISIBLE, monitorEnabled)
-  monitorOffButton.setProperty(prop.VISIBLE, !monitorEnabled)
+  const monitorStatus = getMonitorStatus({
+    enabled: monitorEnabled,
+    serviceActive: backgroundServiceOwnsAlerts,
+    serviceStartPending: backgroundServiceRequested,
+    permissionPending: permissionRequestPending,
+  })
+
+  monitorOnButton.setProperty(prop.VISIBLE, monitorStatus === MonitorStatus.ACTIVE)
+  monitorOffButton.setProperty(prop.VISIBLE, monitorStatus === MonitorStatus.OFF)
+  monitorStartingButton.setProperty(
+    prop.VISIBLE,
+    monitorStatus === MonitorStatus.STARTING,
+  )
+  monitorUnavailableButton.setProperty(
+    prop.VISIBLE,
+    monitorStatus === MonitorStatus.UNAVAILABLE,
+  )
 }
 
 function renderConnectionStatus({ connected, isInitialState, source }) {
@@ -113,66 +128,17 @@ function renderConnectionStatus({ connected, isInitialState, source }) {
 }
 
 function refreshConnectionStatus() {
-  const currentState = connectionStateMachine.getCurrentState()
-  if (typeof currentState === 'boolean') {
-    renderConnectionStatus({
-      connected: currentState,
-      isInitialState: false,
-      source: 'monitor-toggle',
-    })
-  }
-}
-
-function alertOnDisconnect() {
-  if (!monitorEnabled || backgroundServiceOwnsAlerts) {
-    logger.log('Disconnect alert is owned by the background monitor or disabled')
-    return
-  }
-
-  // The foreground listener is status-only; alarm effects have one owner.
-  logger.warn('Disconnect detected without a running background alert service')
-}
-
-function handleConnectionChange(status) {
-  if (typeof status !== 'boolean') {
-    logger.warn('Ignored BLE callback without a boolean connection status')
-    return
-  }
-
-  connectionStateMachine.update(status)
-}
-
-function removePageConnectionListener() {
-  if (!pageConnectionListenerRegistered) {
-    return
-  }
-
-  removeListener()
-  pageConnectionListenerRegistered = false
-  logger.log('Foreground BLE connection listener removed')
-}
-
-function registerPageConnectionListener() {
-  if (
-    !monitorEnabled ||
-    pageConnectionListenerRegistered ||
-    backgroundServiceOwnsAlerts
-  ) {
-    return
-  }
-
-  createConnect((index, data, size) => {
-    logger.debug(`Received foreground companion data: index=${index}, size=${size}`)
+  renderConnectionStatus({
+    connected: connectStatus(),
+    isInitialState: false,
+    source: 'status-refresh',
   })
-  connectionStateMachine.update(connectStatus())
-  addListener(handleConnectionChange)
-  pageConnectionListenerRegistered = true
-  logger.log('Foreground BLE connection listener registered as fallback')
 }
 
 function stopBackgroundMonitor() {
   if (!isBackgroundMonitorRunning()) {
     backgroundServiceOwnsAlerts = false
+    renderMonitorButton()
     return
   }
 
@@ -182,6 +148,7 @@ function stopBackgroundMonitor() {
       backgroundServiceOwnsAlerts = false
       backgroundServiceRequested = false
       logger.log(`Background connection monitor stopped: ${result}`)
+      renderMonitorButton()
 
       if (monitorEnabled) {
         enableBackgroundMonitor()
@@ -201,14 +168,13 @@ function startBackgroundMonitor() {
 
   if (isBackgroundMonitorRunning()) {
     backgroundServiceOwnsAlerts = true
-    // A previous failed start may have enabled the foreground status listener.
-    // Remove it now so the running App Service is the single BLE monitor.
-    removePageConnectionListener()
     logger.log('Background connection monitor is already running')
+    renderMonitorButton()
     return
   }
 
   backgroundServiceRequested = true
+  renderMonitorButton()
   const startResult = startAppService({
     file: BACKGROUND_SERVICE_FILE,
     reload: true,
@@ -225,15 +191,15 @@ function startBackgroundMonitor() {
 
       backgroundServiceOwnsAlerts = didStart
       if (didStart) {
-        // Do not leave a fallback BLE connection alongside the App Service:
-        // it can race the service and make a restored connection look lost.
-        removePageConnectionListener()
         logger.log('Background connection monitor started')
+        renderMonitorButton()
         return
       }
 
+      // No foreground alert fallback exists: it cannot keep monitoring after
+      // the page closes. Report the failure instead of claiming monitoring ON.
       logger.warn('Background connection monitor could not start')
-      registerPageConnectionListener()
+      renderMonitorButton()
     },
   })
 
@@ -244,7 +210,7 @@ function startBackgroundMonitor() {
     backgroundServiceRequested = false
     backgroundServiceOwnsAlerts = false
     logger.warn(`Background monitor start rejected: ${startResult}`)
-    registerPageConnectionListener()
+    renderMonitorButton()
   }
 }
 
@@ -252,31 +218,51 @@ function enableBackgroundMonitor() {
   const permissionStates = queryPermission({
     permissions: [BACKGROUND_PERMISSION],
   })
+  logger.log(`Background-monitor permission status: ${permissionStates[0]}`)
 
   if (isPermissionGranted(permissionStates[0])) {
     startBackgroundMonitor()
     return
   }
 
+  permissionRequestPending = true
+  renderMonitorButton()
   const permissionRequestResult = requestPermission({
     permissions: [BACKGROUND_PERMISSION],
     callback: (result) => {
+      permissionRequestPending = false
+      logger.log(`Background-monitor permission callback: ${result[0]}`)
       if (isPermissionGranted(result[0])) {
         startBackgroundMonitor()
         return
       }
 
       logger.warn('Background-monitor permission was not granted')
-      registerPageConnectionListener()
+      renderMonitorButton()
     },
   })
+  logger.log(`Background-monitor permission request: ${permissionRequestResult}`)
 
   // Zepp may grant this request synchronously and omit the callback. This is
   // common immediately after installing an app, so start monitoring here too.
   if (isPermissionGranted(permissionRequestResult)) {
+    permissionRequestPending = false
     logger.log('Background-monitor permission already granted')
     startBackgroundMonitor()
+  } else if (permissionRequestResult === 1) {
+    permissionRequestPending = false
+    logger.warn('Background-monitor permission request is unavailable')
+    renderMonitorButton()
   }
+}
+
+function retryBackgroundMonitor() {
+  if (!monitorEnabled) {
+    return
+  }
+
+  logger.log('Retrying background connection monitor')
+  enableBackgroundMonitor()
 }
 
 function toggleMonitor() {
@@ -290,7 +276,6 @@ function toggleMonitor() {
     return
   }
 
-  removePageConnectionListener()
   stopBackgroundMonitor()
   logger.log('Connection monitor disabled by the user')
 }
@@ -433,12 +418,11 @@ function buildAboutScreen() {
 
 Page({
   onInit() {
-    connectionStateMachine = createConnectionStateMachine({
-      onStateChange: renderConnectionStatus,
-      onDisconnect: alertOnDisconnect,
+    renderConnectionStatus({
+      connected: connectStatus(),
+      isInitialState: true,
+      source: 'initial-read',
     })
-
-    connectionStateMachine.initialize(connectStatus())
     if (monitorEnabled) {
       enableBackgroundMonitor()
     }
@@ -485,7 +469,7 @@ Page({
       color: 0xffffff,
       text: 'MONITORING ON',
       text_size: 30,
-      visible: monitorEnabled,
+      visible: false,
       click_func: toggleMonitor,
     })
 
@@ -497,8 +481,31 @@ Page({
       color: 0xffffff,
       text: 'NOT MONITORING',
       text_size: 30,
-      visible: !monitorEnabled,
+      visible: false,
       click_func: toggleMonitor,
+    })
+
+    monitorStartingButton = createWidget(widget.BUTTON, {
+      ...Styles.MONITOR_BUTTON_STYLE,
+      radius: 63,
+      normal_color: 0x946b22,
+      press_color: 0x946b22,
+      color: 0xffffff,
+      text: 'MONITOR STARTING',
+      text_size: 29,
+      visible: false,
+    })
+
+    monitorUnavailableButton = createWidget(widget.BUTTON, {
+      ...Styles.MONITOR_BUTTON_STYLE,
+      radius: 63,
+      normal_color: 0x8f3c35,
+      press_color: 0xc35f53,
+      color: 0xffffff,
+      text: 'MONITOR UNAVAILABLE',
+      text_size: 26,
+      visible: false,
+      click_func: retryBackgroundMonitor,
     })
     renderMonitorButton()
 
@@ -570,18 +577,14 @@ Page({
   },
 
   onDestroy() {
-    removePageConnectionListener()
-
-    if (!backgroundServiceRequested && !backgroundServiceOwnsAlerts) {
-      disConnect()
-    }
     statusWidget = undefined
     monitorOnButton = undefined
     monitorOffButton = undefined
+    monitorStartingButton = undefined
+    monitorUnavailableButton = undefined
     delayButton = undefined
     stopButton = undefined
     soundButton = undefined
     vibrationButton = undefined
-    connectionStateMachine = undefined
   },
 })
