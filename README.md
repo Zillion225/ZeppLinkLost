@@ -17,9 +17,10 @@ Link Lost is a small utility app for Amazfit watches running Zepp OS. It monitor
 
 1. Open Link Lost on the watch.
 2. Allow the required background-service permission.
-3. Keep **Monitoring ON**.
-4. Return to the watch face and use the watch normally.
-5. If the paired phone connection is lost and remains disconnected longer than the selected delay, Link Lost shows a notification and can trigger vibration and an alarm sound.
+3. Open Link Lost again after granting the permission.
+4. Confirm that the app shows **Monitoring ON**.
+5. Return to the watch face and use the watch normally.
+6. If the paired phone connection is lost and remains disconnected longer than the selected delay, Link Lost shows a notification and can trigger vibration and an alarm sound.
 
 The disconnect delay helps avoid alerts for very short connection interruptions.
 
@@ -77,14 +78,16 @@ Important manual scenarios include:
 
 ## Store-review behavior
 
-For review or manual verification:
+For review or manual verification, use this sequence:
 
-1. Install and launch Link Lost.
-2. Allow background monitoring permission.
-3. Confirm **Monitoring ON**.
-4. Return to the watch face.
-5. Disconnect the paired phone.
-6. Wait for the configured disconnect delay.
+1. Install Link Lost.
+2. Open Link Lost on the watch.
+3. Grant the requested background-service permission.
+4. Open Link Lost again after the permission has been granted.
+5. Verify that the main screen shows **Monitoring ON**.
+6. Return to the watch face.
+7. Disconnect the paired phone.
+8. Wait for the configured disconnect delay.
 
 If the watch remains disconnected, Link Lost should display the disconnect reminder and trigger the enabled alert effects.
 
